@@ -46,6 +46,7 @@ module Control.Parallel.HdpH
     probe,     -- :: IVar a -> Par Bool
     glob,      -- :: IVar (Closure a) -> Par (GIVar (Closure a))
     rput,      -- :: GIVar (Closure a) -> Closure a -> Par ()
+    tryRPut,      -- :: GIVar (Closure a) -> Closure a -> Par ()
     stub,      -- :: Par () -> Par ()
 
     -- * Locations and distance metric
@@ -92,7 +93,7 @@ import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
 import qualified Control.Parallel.HdpH.Internal.IVar as IVar (IVar, GIVar)
 import Control.Parallel.HdpH.Internal.IVar
        (hostGIVar, newIVar, putIVar, getIVar, pollIVar, probeIVar,
-        globIVar, putGIVar)
+        globIVar, putGIVar, tryPutGIVar)
 import qualified Control.Parallel.HdpH.Internal.Location as Location
        (Node, debug, dbgStaticTab)
 import qualified Control.Parallel.HdpH.Internal.Topology as Topology
@@ -492,6 +493,22 @@ rput_abs (GIVar gv, clo) =
     liftThreadM $ putThreads lts >>
     return (hts, ())
 
+tryRPut :: GIVar (Closure a) -> Closure a -> Par (IVar (Closure Bool))
+{-# INLINE tryRPut #-}
+tryRPut gv clo = spawnAt (at gv) $(mkClosure [| tryRPut_abs (gv, clo) |])
+
+-- write to locally hosted global IVar; don't export
+tryRPut_abs :: (GIVar (Closure a), Closure a) -> Thunk (Par (Closure Bool))
+{-# INLINE tryRPut_abs #-}
+tryRPut_abs (GIVar gv, clo) =
+  Thunk $ atomMayInjectHi $ const $
+        schedulerID >>= \ i ->
+        liftIO (tryPutGIVar i gv clo) >>= \ (suc, hts, lts) ->
+        liftThreadM $ putThreads lts >>
+        return (hts, toClosure suc)
+
+instance ToClosure Bool where locToClosure = $(here)
+
 -- | Fork argument as stub to stand in for an external computing resource.
 stub :: Par () -> Par ()
 {-# INLINE stub #-}
@@ -518,4 +535,5 @@ declareStatic = mconcat
    declare (staticToClosure :: StaticToClosure [Node]),
    declare $(static 'allNodesWithin_abs),
    declare $(static 'spawn_abs),
-   declare $(static 'rput_abs)]
+   declare $(static 'rput_abs),
+   declare $(static 'tryRPut_abs)]

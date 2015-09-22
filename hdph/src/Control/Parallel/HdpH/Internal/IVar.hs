@@ -20,7 +20,8 @@ module Control.Parallel.HdpH.Internal.IVar
     -- * operations on global IVars
     globIVar,   -- :: Int -> IVar m a -> IO (GIVar m a)
     hostGIVar,  -- :: GIVar m a -> Node
-    putGIVar    -- :: Int -> GIVar m a -> a -> IO ([Thread m], [Thread m])
+    putGIVar,    -- :: Int -> GIVar m a -> a -> IO ([Thread m], [Thread m])
+    tryPutGIVar
   ) where
 
 import Prelude hiding (error)
@@ -161,3 +162,35 @@ putGIVar _schedID gv x = do
   ts <- withGRef gv (\ v -> putIVar v x) (return ([],[]))
   freeNow gv  -- free 'gv' immediately; could use 'free' instead of 'freeNow'
   return ts
+
+tryPutGIVar :: Int -> GIVar m a -> a -> IO (Bool, [Thread m], [Thread m])
+tryPutGIVar _schedID gv x = do
+  debug dbgGIVar $ "Put to global IVar " ++ show gv
+  ts <- withGRef gv (\ v -> tryPutIVar v x) (return (False, [], []))
+  freeNow gv  -- free 'gv' immediately; could use 'free' instead of 'freeNow'
+  return ts
+
+tryPutIVar :: IVar m a -> a -> IO (Bool, [Thread m], [Thread m])
+tryPutIVar v x = do
+  e <- readIORef v
+  case e of
+    Full _      -> do debug dbgIVar $ "Put to full IVar"
+                      return (False, [],[])
+    Blocked _ _ -> do maybe_ts <- atomicModifyIORef v fill_and_unblock
+                      case maybe_ts of
+                        Nothing        -> do debug dbgIVar $
+                                               "Put to full IVar (race)"
+                                             return (False, [],[])
+                        Just (hts,lts) -> do debug dbgIVar $
+                                               "Put to empty IVar; " ++
+                                               "unblocking " ++
+                                               show (length hts + length lts) ++
+                                               " threads"
+                                             return (True, hts,lts)
+      where
+     -- fill_and_unblock :: IVarContent m a ->
+     --                       (IVarContent m a, Maybe ([Thread m], [Thread m]))
+        fill_and_unblock st =
+          case st of
+            Full _          -> (st,     Nothing)
+            Blocked hcs lcs -> (Full x, Just (map ($ x) hcs, map ($ x) lcs))
