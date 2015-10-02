@@ -505,9 +505,13 @@ tryRPut_abs (GIVar gv, clo) =
         schedulerID >>= \ i ->
         liftIO (tryPutGIVar i gv clo) >>= \ (suc, hts, lts) ->
         liftThreadM $ putThreads lts >>
-        return (hts, toClosure suc)
+        return (hts, toClosureBool suc)
 
-instance ToClosure Bool where locToClosure = $(here)
+toClosureBool :: Bool -> Closure Bool
+toClosureBool b = $(mkClosure [| toClosureBool_abs b |])
+
+toClosureBool_abs :: Bool -> Thunk Bool
+toClosureBool_abs b = Thunk b
 
 -- | Fork argument as stub to stand in for an external computing resource.
 stub :: Par () -> Par ()
@@ -533,6 +537,7 @@ declareStatic :: StaticDecl
 declareStatic = mconcat
   [Closure.declareStatic,
    declare (staticToClosure :: StaticToClosure [Node]),
+   declare $(static 'toClosureBool_abs),
    declare $(static 'allNodesWithin_abs),
    declare $(static 'spawn_abs),
    declare $(static 'rput_abs),
