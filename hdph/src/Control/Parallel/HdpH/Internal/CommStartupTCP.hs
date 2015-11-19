@@ -16,6 +16,7 @@ import Data.ByteString.Char8 (hPutStrLn)
 
 import Network.Socket
 import Network.BSD
+import Network.Info
 
 import System.IO.Error
 import System.IO (IOMode(..), Handle, hClose)
@@ -50,16 +51,20 @@ startupTCP' conf nodeEnc = do hn <- getHostName
         Nothing -> sendDetails
         Just s  -> rootProcStartup s
 
-    -- TODO: Should check all the addresses returned by getAddrInfo
+    -- This funciton is unsafe if the filter step works - But that's probably
+    -- okay since we can't go any further in this case anyway.
     tryBind :: IO (Maybe Socket)
-    tryBind = do (hostAddr:_) <- getAddrInfo
-                                (Just (defaultHints {addrFamily = AF_INET}))
-                                (Just (startupHost conf))
-                                (Just (startupPort conf))
+    tryBind = do nif  <- filter (\n -> name n == interface conf) <$> getNetworkInterfaces
+                 nif' <- case nif of
+                   [x] -> return x
+                   _   -> moduleError "tryBind" ("Could not get ip for interface " ++ show (interface conf))
                  s <- socket AF_INET Stream defaultProtocol
-                 (bindSocket s (addrAddress hostAddr) >> return (Just s))
-                                                         `catchIOError`
-                                                         (\_ -> return Nothing)
+                 let ip (IPv4 wd) =  wd
+                     portNum = (read $ startupPort conf) :: Integer
+                     addr' = SockAddrInet (fromInteger portNum) (ip $ ipv4 nif' )
+                 (bindSocket s addr' >> return (Just s))
+                                        `catchIOError`
+                                       (\_ -> return Nothing)
 
     -- Start the root node listening,
     -- wait to receive 'numProc' bytestrings (or timeout),
