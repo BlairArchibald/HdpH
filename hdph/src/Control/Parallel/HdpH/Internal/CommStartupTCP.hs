@@ -40,31 +40,44 @@ startupTCP conf meEnc = let valid = validateConf in
 startupTCP' :: RTSConf -> ByteString -> IO [ByteString]
 startupTCP' conf nodeEnc = do hn <- getHostName
                               if hn /= startupHost conf
-                               then sendDetails
+                               then getStartupAddr >>= sendDetails
                                else handleStartupRootNode
 
   where
     handleStartupRootNode :: IO [ByteString]
     handleStartupRootNode = withSocketsDo $ do
-      masterSock <- tryBind
+      addr <- getRootAddr
+      masterSock <- tryBind addr
       case masterSock of
-        Nothing -> sendDetails
+        Nothing -> sendDetails addr
         Just s  -> rootProcStartup s
+
+    getRootAddr :: IO SockAddr
+    getRootAddr = do
+      nif  <- filter (\n -> name n == interface conf) <$> getNetworkInterfaces
+      nif' <- case nif of
+                [x] -> return x
+                _   -> moduleError "tryBind" ("Could not get ip for interface " ++ show (interface conf))
+
+      let ip (IPv4 wd) =  wd
+          portNum = (read $ startupPort conf) :: Integer
+          addr' = SockAddrInet (fromInteger portNum) (ip $ ipv4 nif' )
+
+      return addr'
+
+    getStartupAddr :: IO SockAddr
+    -- TODO: Check all the addresses returned by getAddrInfo
+    getStartupAddr =  do (rootAddr:_) <- getAddrInfo
+                                        (Just (defaultHints {addrFamily = AF_INET}))
+                                        (Just (startupHost conf))
+                                        (Just (startupPort conf))
+                         return $ addrAddress rootAddr
 
     -- This funciton is unsafe if the filter step works - But that's probably
     -- okay since we can't go any further in this case anyway.
-    tryBind :: IO (Maybe Socket)
-    tryBind = do nif  <- filter (\n -> name n == interface conf) <$> getNetworkInterfaces
-                 nif' <- case nif of
-                   [x] -> return x
-                   _   -> moduleError "tryBind" ("Could not get ip for interface " ++ show (interface conf))
-                 s <- socket AF_INET Stream defaultProtocol
-                 let ip (IPv4 wd) =  wd
-                     portNum = (read $ startupPort conf) :: Integer
-                     addr' = SockAddrInet (fromInteger portNum) (ip $ ipv4 nif' )
-                 (bindSocket s addr' >> return (Just s))
-                                        `catchIOError`
-                                       (\_ -> return Nothing)
+    tryBind :: SockAddr -> IO (Maybe Socket)
+    tryBind addr = do s <- socket AF_INET Stream defaultProtocol
+                      (bindSocket s addr >> return (Just s)) `catchIOError` (\_ -> return Nothing)
 
     -- Start the root node listening,
     -- wait to receive 'numProc' bytestrings (or timeout),
@@ -93,23 +106,18 @@ startupTCP' conf nodeEnc = do hn <- getHostName
 
     -- 'slave' nodes connect, send their bytestring and then wait for the
     -- universe details to be sent to them.
-    sendDetails:: IO [ByteString]
-    sendDetails = withSocketsDo $ do
+    sendDetails :: SockAddr -> IO [ByteString]
+    sendDetails addr = withSocketsDo $ do
 
-      -- TODO: Should check all the addresses returned from getAddrInfo
-      (rootAddr:_) <- getAddrInfo
-                      (Just (defaultHints {addrFamily = AF_INET}))
-                      (Just (startupHost conf))
-                      (Just (startupPort conf))
-      s <- socket (addrFamily rootAddr) Stream defaultProtocol
+      s <- socket AF_INET Stream defaultProtocol
 
-      connSuc <- timeOut conf $ let retry = connect s (addrAddress rootAddr)
+      connSuc <- timeOut conf $ let retry = connect s addr
                                               `catchIOError`
                                               (\_ -> threadDelay 1000 >> retry)
-                                  in retry
+                                in  retry
       case connSuc of
         Nothing  -> moduleError "sendDetails" "Failed to connect to root node."
-        Just _ -> return ()
+        Just _   -> return ()
 
       h <- socketToHandle s ReadWriteMode
       hPutStrLn h nodeEnc
