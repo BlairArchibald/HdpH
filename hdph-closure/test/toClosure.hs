@@ -19,7 +19,7 @@ import qualified Data.ByteString as BS (length)
 import Data.Functor ((<$>))
 import Data.Monoid (mconcat)
 import Data.List (stripPrefix)
-import Data.Serialize (encode, decode)
+import Data.Binary (encode, decode)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import System.Environment (getArgs)
 

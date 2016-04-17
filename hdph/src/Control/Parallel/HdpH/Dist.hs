@@ -3,11 +3,11 @@
 -- Author: Patrick Maier
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- for deriving Serialize instance
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- for deriving Binary instance
 
 module Control.Parallel.HdpH.Dist
   ( -- * distance type
-    Dist            -- instances: Eq, Ord, Show, NFData, Serialize
+    Dist            -- instances: Eq, Ord, Show, NFData, Binary
   , isDist          -- :: Dist -> Bool
   , toRational      -- :: Dist -> Rational
   , fromRational    -- :: Rational -> Dist
@@ -24,7 +24,7 @@ import Prelude hiding (fromRational, toRational)
 import Control.DeepSeq (NFData)
 import Data.Ix (Ix)
 import Data.Ratio ((%), numerator, denominator)
-import Data.Serialize (Serialize)
+import Data.Binary (Binary)
 
 thisModule :: String
 thisModule = "Control.Parallel.HdpH.Dist"
@@ -34,7 +34,7 @@ thisModule = "Control.Parallel.HdpH.Dist"
 -- distance type
 
 -- | Abstract type of distances.
-newtype Dist = Dist Integer deriving (Eq, Ix, NFData, Serialize)
+newtype Dist = Dist Integer deriving (Eq, Ix, NFData, Binary)
 -- Internally, distances are represented non-negative integers such that
 -- integer 0 represents distance 0, and
 -- a positive integer n represents distance 1/2^{n-1}.

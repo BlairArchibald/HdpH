@@ -26,7 +26,7 @@ module Control.Parallel.HdpH.Closure.Internal
     here,             -- :: ExpQ
 
     -- Closure type constructor
-    Closure,          -- instances: Show, NFData, Serialize
+    Closure,          -- instances: Show, NFData, Binary
     
     -- Closure dictionary type constructor
     CDict,            -- no instances
@@ -49,7 +49,7 @@ module Control.Parallel.HdpH.Closure.Internal
 import Prelude hiding (exp)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (unless)
-import Data.Serialize (Serialize(put, get), Get, Put)
+import Data.Binary (Binary(put, get), Get, Put)
 import Language.Haskell.TH
        (Q, Exp(AppE, VarE, LitE, TupE, ConE), ExpQ,
         Type(AppT, ArrowT, ConT, ForallT),
@@ -97,7 +97,7 @@ data CDict env a =
                absEnv :: env -> Thunk a }  -- environment abstraction
 
 -- | Construct a closure dictionary from a given environment abstraction.
-mkCDict :: (NFData env, Serialize env) => (env -> Thunk a) -> CDict env a
+mkCDict :: (NFData env, Binary env) => (env -> Thunk a) -> CDict env a
 mkCDict env_abs =
   CDict { putEnv = put, getEnv = get, rnfEnv = rnf, absEnv = env_abs }
 
@@ -117,7 +117,7 @@ instance NFData (Closure a) where
   rnf (Closure st_dict env) = rnfEnv (unstatic st_dict) env
 
 -- Explicit closures are serialisable (using the static dictionary).
-instance Serialize (Closure a) where
+instance Binary (Closure a) where
   put (Closure st_dict env) = do put st_dict 
                                  putEnv (unstatic st_dict) env
   get = do st_dict <- get
@@ -227,7 +227,7 @@ staticInternal prf is_abs name = do
 
 -- Called by 'staticInternal' if argument names an environment abstraction.
 {-# INLINE mkStatic #-}
-mkStatic :: (NFData env, Serialize env)
+mkStatic :: (NFData env, Binary env)
          => (env -> Thunk a) -> String -> Static (CDict env a)
 mkStatic env_abs label =
   staticAs (mkCDict env_abs) label
@@ -261,7 +261,7 @@ staticLocInternal prf is_abs name = do
 
 -- Called by 'staticLoc' if argument names an environment abstraction.
 {-# INLINE mkStaticLoc #-}
-mkStaticLoc :: (NFData env, Serialize env)
+mkStaticLoc :: (NFData env, Binary env)
             => (env -> Thunk a) -> String -> (LocT a -> Static (CDict env a))
 mkStaticLoc env_abs label =
   \ loc -> staticAs (mkCDict env_abs) $

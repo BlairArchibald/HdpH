@@ -33,18 +33,6 @@ module Control.Parallel.HdpH.Internal.Misc
     -- * random permutation of given list
     shuffle,       --  :: [a] -> IO [a]
 
-    -- * decode ByteStrings (without error reporting)
-    decode,        -- :: Serialize a => Strict.ByteString -> a
-    decodeLazy,    -- :: Serialize a => Lazy.ByteString -> a
-
-    -- * encode ByteStrings (companions to the decoders above)
-    encode,        -- :: Serialize a => a -> Strict.ByteString
-    encodeLazy,    -- :: Serialize a => a -> Lazy.ByteString
-
-    -- * encode/decode lists of bytes
-    encodeBytes,   -- :: Serialize a => a -> [Word8]
-    decodeBytes,   -- :: Serialize a => [Word8] -> a
-
     -- * destructors of Either values
     fromLeft,      -- :: Either a b -> a
     fromRight,     -- :: Either a b -> b
@@ -79,8 +67,8 @@ import qualified Data.ByteString
 import qualified Data.ByteString.Lazy
        as Lazy (ByteString, pack, unpack)
 import Data.Functor ((<$>))
-import Data.Serialize (Serialize)
-import qualified Data.Serialize (encode, decode, encodeLazy, decodeLazy)
+import Data.Binary (Binary)
+import qualified Data.Binary (encode, decode)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Data.Word (Word8)
 import System.Random (randomRIO)
@@ -133,37 +121,6 @@ shuffle xs | n < 2     = return xs
                            where
                              n = length xs
                              (l,r) = splitAt (n `div` 2) xs
-
-
--------------------------------------------------------------------------------
--- Functionality missing in Data.Serialize
-
-encode :: Serialize a => a -> Strict.ByteString
-encode = Data.Serialize.encode
-
-decode :: Serialize a => Strict.ByteString -> a
-decode bs =
-  case Data.Serialize.decode bs of
-    Right x  -> x
-    Left msg -> error $ "HdpH.Internal.Misc.decode " ++
-                         showPrefix 10 bs ++ ": " ++ msg
-
-encodeLazy :: Serialize a => a -> Lazy.ByteString
-encodeLazy = Data.Serialize.encodeLazy
-
-decodeLazy :: Serialize a => Lazy.ByteString -> a
-decodeLazy bs =
-  case Data.Serialize.decodeLazy bs of
-    Right x  -> x
-    Left msg -> error $ "HdpH.Internal.Misc.decodeLazy " ++
-                        showPrefixLazy 10 bs ++ ": " ++ msg
-
-decodeBytes :: Serialize a => [Word8] -> a
-decodeBytes = decodeLazy . Lazy.pack
-
-encodeBytes :: Serialize a => a -> [Word8]
-encodeBytes = Lazy.unpack . Data.Serialize.encodeLazy
-
 
 showPrefix :: Int -> Strict.ByteString -> String
 showPrefix n bs = showListUpto n (Strict.unpack bs) ""

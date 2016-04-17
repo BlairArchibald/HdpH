@@ -38,11 +38,10 @@ import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.DeepSeq (($!!))
 import Control.Exception (finally)
 import Control.Monad (when, unless)
-import Data.ByteString as Strict (ByteString)
-import qualified Data.ByteString.Lazy as LBS (toChunks, fromChunks)
+import Data.ByteString.Lazy (ByteString, toStrict, fromStrict, toChunks, fromChunks)
 import Data.Functor ((<$>))
 import Data.IORef (readIORef, writeIORef, atomicModifyIORef)
-import Data.Serialize (encode, decode)
+import Data.Binary (encode, decode)
 import Data.List (delete)
 
 import Network.Info (IPv4, ipv4, name, getNetworkInterfaces)
@@ -174,7 +173,7 @@ withCommDo conf0 action = do
   -- create a local end point (and this node)
   ep <- createEndPoint tp
   let !me = mkNode (path conf0) (NT.address ep)
-  let !me_enc = encode me
+  let !me_enc = toStrict . encode $ me
 
 --  hPutStrLn stderr ("DEBUG.withCommDo.1: " ++ show me) >> hFlush stderr
 
@@ -236,8 +235,8 @@ withCommDo conf0 action = do
   where doStartup cfg thisNode = do
           let backend = startupBackend cfg
           case backend of
-            UDP -> startupUDP (numProcs cfg) thisNode >>= return . map decodeNode
-            TCP -> startupTCP cfg thisNode >>= return . map decodeNode
+            UDP -> startupUDP (numProcs cfg) thisNode >>= return . map (decode . fromStrict)
+            TCP -> startupTCP cfg thisNode >>= return . map (decode . fromStrict)
 
 -- Return the IP address associated with the interface named in RTS config.
 discoverMyIP :: RTSConf -> IO IPv4
@@ -275,11 +274,11 @@ createEndPoint tp = do
 
 
 -- Deserialize node; abort on error.
-decodeNode :: Strict.ByteString -> Node
-decodeNode bs =
-  case decode bs of
-    Right node -> node
-    Left e     -> error $ thisModule ++ ".decodeNode: " ++ show e
+-- decodeNode :: ByteString -> Node
+-- decodeNode bs =
+--   case decode bs of
+--     Right node -> node
+--     Left e     -> error $ thisModule ++ ".decodeNode: " ++ show e
 
 
 -- Instantiate CacheMappable class to make connection cache work;
@@ -318,7 +317,7 @@ send dest message = do
   case maybe_conn of
     Nothing   -> return ()  -- ignoring connection error
     Just conn -> do
-      ok <- NT.send conn $ LBS.toChunks message
+      ok <- NT.send conn $ toChunks message
       case ok of
         Right () -> return ()
         Left err -> debug dbgFailure $
@@ -345,7 +344,7 @@ recv :: NT.EndPoint -> IO Payload
 recv ep = do
   event <- NT.receive ep
   case event of
-    NT.Received _ msg -> return $!! LBS.fromChunks msg  -- Q: ($!!) or ($!)?
+    NT.Received _ msg -> return $!! fromChunks msg  -- Q: ($!!) or ($!)?
     NT.ErrorEvent err -> do
       debug dbgFailure $ "Comm.recv: " ++ show err
       case err of

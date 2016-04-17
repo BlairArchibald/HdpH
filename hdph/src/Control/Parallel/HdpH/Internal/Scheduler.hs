@@ -32,8 +32,10 @@ import Control.Applicative (Applicative)
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Monad (unless, when, void)
-import qualified Data.ByteString.Lazy as BS
+import qualified Data.ByteString.Lazy as BS (length)
 import Data.Functor ((<$>))
+
+import Data.Binary (encode, decode)
 
 import Control.Parallel.HdpH.Closure (unClosure)
 import Control.Parallel.HdpH.Conf (RTSConf(scheds, wakeupDly))
@@ -45,8 +47,7 @@ import qualified Control.Parallel.HdpH.Internal.Data.Sem as Sem
 import Control.Parallel.HdpH.Internal.Location
        (Node, dbgStats, dbgMsgSend, dbgMsgRcvd, error)
 import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
-import Control.Parallel.HdpH.Internal.Misc
-       (encodeLazy, decodeLazy, ActionServer, newServer, killServer)
+import Control.Parallel.HdpH.Internal.Misc (ActionServer, newServer, killServer)
 import Control.Parallel.HdpH.Internal.Sparkpool
        (SparkM, blockSched, getLocalSpark, Msg(TERM,PUSH), dispatch,
         readFishSentCtr, readSparkRcvdCtr, readSparkGenCtr)
@@ -140,7 +141,7 @@ run_ conf main = do
         when is_root $ do
           -- root: send TERM msg to all nodes to lift termination barrier
           everywhere <- liftIO Comm.allNodes
-          let term_msg = encodeLazy (TERM me)
+          let term_msg = encode (TERM me)
           liftIO $ mapM_ (\ node -> Comm.send node term_msg) everywhere
 
         -- all nodes: block waiting for termination barrier
@@ -266,9 +267,9 @@ sendPUSH spark target = do
     else do
       -- construct and send PUSH message
       let msg = PUSH spark :: Msg RTS
-      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
+      debug dbgMsgSend $ let msg_size = BS.length (encode msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ (show msg_size)
-      liftIO $ Comm.send target $ encodeLazy msg
+      liftIO $ Comm.send target $ encode msg
 
 
 -- Handle a PUSH message by converting the spark into a high priority thread
@@ -283,7 +284,7 @@ handleTERM :: MVar () -> Int -> Msg RTS -> RTS Int
 handleTERM term_barrier term_count msg@(TERM root) = do
   if term_count == 0
     then do -- non-root node: deflect TERM msg, lift term barrier, term handler
-            liftIO $ Comm.send root $ encodeLazy msg
+            liftIO $ Comm.send root $ encode msg
             void $ liftIO $ tryPutMVar term_barrier () 
             return (-1)
     else -- root node
@@ -306,7 +307,7 @@ handleTERM _ _ _ = error "panic in handleTERM: not a TERM message"
 handler :: MVar () -> Int -> RTS ()
 handler term_barrier term_count =
   when (term_count >= 0) $ do
-    msg <- decodeLazy <$> liftIO Comm.receive
+    msg <- decode <$> liftIO Comm.receive
     debug dbgMsgRcvd $
       ">> " ++ show msg
     case msg of

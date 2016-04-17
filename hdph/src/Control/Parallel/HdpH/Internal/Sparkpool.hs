@@ -23,7 +23,7 @@ module Control.Parallel.HdpH.Internal.Sparkpool
     putLocalSparkWithPrio,
 
     -- * messages
-    Msg(..),         -- instances: Show, NFData, Serialize
+    Msg(..),         -- instances: Show, NFData, Binary
 
     -- * handle messages related to fishing
     dispatch,        -- :: Msg m -> SparkM m ()
@@ -53,8 +53,8 @@ import Data.Functor ((<$>))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef)
 import Data.List (insertBy, sortBy)
 import Data.Ord (comparing)
-import Data.Serialize (Serialize)
-import qualified Data.Serialize (put, get)
+import Data.Binary (Binary, encode)
+import qualified Data.Binary (put, get)
 import Data.Word (Word8)
 import System.Random (randomRIO)
 
@@ -83,7 +83,7 @@ import Control.Parallel.HdpH.Internal.Location
        (Node, dbgMsgSend, dbgSpark, error)
 import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
 import Control.Parallel.HdpH.Internal.Topology (dist)
-import Control.Parallel.HdpH.Internal.Misc (encodeLazy, ActionServer, reqAction)
+import Control.Parallel.HdpH.Internal.Misc (ActionServer, reqAction)
 import Control.Parallel.HdpH.Internal.Type.Par (Spark)
 
 
@@ -436,45 +436,45 @@ instance NFData (Msg m) where
 
 
 -- TODO: Derive this instance.
-instance Serialize (Msg m) where
-  put (TERM root)               = Data.Serialize.put (0 :: Word8) >>
-                                  Data.Serialize.put root
+instance Binary (Msg m) where
+  put (TERM root)               = Data.Binary.put (0 :: Word8) >>
+                                  Data.Binary.put root
   put (FISH thief avoid candidates sources fwd)
-                                = Data.Serialize.put (1 :: Word8) >>
-                                  Data.Serialize.put thief >>
-                                  Data.Serialize.put avoid >>
-                                  Data.Serialize.put candidates >>
-                                  Data.Serialize.put sources >>
-                                  Data.Serialize.put fwd
-  put (NOWORK)                  = Data.Serialize.put (2 :: Word8)
+                                = Data.Binary.put (1 :: Word8) >>
+                                  Data.Binary.put thief >>
+                                  Data.Binary.put avoid >>
+                                  Data.Binary.put candidates >>
+                                  Data.Binary.put sources >>
+                                  Data.Binary.put fwd
+  put (NOWORK)                  = Data.Binary.put (2 :: Word8)
   put (SCHEDULE spark r p victim)
-                                = Data.Serialize.put (3 :: Word8) >>
-                                  Data.Serialize.put spark >>
-                                  Data.Serialize.put r >>
-                                  Data.Serialize.put p >>
-                                  Data.Serialize.put victim
-  put (PUSH spark)              = Data.Serialize.put (4 :: Word8) >>
-                                  Data.Serialize.put spark
+                                = Data.Binary.put (3 :: Word8) >>
+                                  Data.Binary.put spark >>
+                                  Data.Binary.put r >>
+                                  Data.Binary.put p >>
+                                  Data.Binary.put victim
+  put (PUSH spark)              = Data.Binary.put (4 :: Word8) >>
+                                  Data.Binary.put spark
 
-  get = do tag <- Data.Serialize.get
+  get = do tag <- Data.Binary.get
            case tag :: Word8 of
-             0 -> do root <- Data.Serialize.get
+             0 -> do root <- Data.Binary.get
                      return $ TERM root
-             1 -> do thief      <- Data.Serialize.get
-                     avoid      <- Data.Serialize.get
-                     candidates <- Data.Serialize.get
-                     sources    <- Data.Serialize.get
-                     fwd        <- Data.Serialize.get
+             1 -> do thief      <- Data.Binary.get
+                     avoid      <- Data.Binary.get
+                     candidates <- Data.Binary.get
+                     sources    <- Data.Binary.get
+                     fwd        <- Data.Binary.get
                      return $ FISH thief avoid candidates sources fwd
              2 -> do return $ NOWORK
-             3 -> do spark  <- Data.Serialize.get
-                     r      <- Data.Serialize.get
-                     p      <- Data.Serialize.get
-                     victim <- Data.Serialize.get
+             3 -> do spark  <- Data.Binary.get
+                     r      <- Data.Binary.get
+                     p      <- Data.Binary.get
+                     victim <- Data.Binary.get
                      return $ SCHEDULE spark r p victim
-             4 -> do spark  <- Data.Serialize.get
+             4 -> do spark  <- Data.Binary.get
                      return $ PUSH spark
-             _ -> error "panic in instance Serialize (Msg m): tag out of range"
+             _ -> error "panic in instance Binary (Msg m): tag out of range"
 
 
 -----------------------------------------------------------------------------
@@ -544,9 +544,9 @@ sendFISH r_min = do
                   cand:cands -> (cand, FISH thief [] cands [] True)
                   []         -> (thief, NOWORK)  -- no candidates --> NOWORK
       -- send FISH (or NOWORK) message
-      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
+      debug dbgMsgSend $ let msg_size = BS.length (encode msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send target $ encodeLazy msg
+      liftIO $ Comm.send target $ encode msg
       case msg of
         FISH _ _ _ _ _ -> getFishSentCtr >>= incCtr  -- update stats
         _              -> return ()
@@ -580,17 +580,17 @@ handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
   case maybe_spark of
     Just (spark, r, prio) -> do -- compose and send SCHEDULE
       let scheduleMsg = SCHEDULE spark r prio me
-      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy scheduleMsg) in
+      debug dbgMsgSend $ let msg_size = BS.length (encode scheduleMsg) in
         show scheduleMsg ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send thief $ encodeLazy scheduleMsg
+      liftIO $ Comm.send thief $ encode scheduleMsg
     Nothing -> do
       maybe_src <- readSparkOrigHist
       -- compose FISH message to forward
       let (target, forwardMsg) = forwardFISH me maybe_src msg
       -- send message
-      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy forwardMsg) in
+      debug dbgMsgSend $ let msg_size = BS.length (encode forwardMsg) in
         show forwardMsg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send target $ encodeLazy forwardMsg
+      liftIO $ Comm.send target $ encode forwardMsg
 handleFISH _ = error "panic in handleFISH: not a FISH message"
 
 -- Auxiliary function, called by 'handleFISH' when there is nought to schedule.

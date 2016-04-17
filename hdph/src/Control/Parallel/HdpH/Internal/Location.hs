@@ -11,7 +11,7 @@
 
 module Control.Parallel.HdpH.Internal.Location
   ( -- * node IDs (and their constitutent parts)
-    Node,     -- instances: Eq, Ord, Show, NFData, Serialize, Hashable
+    Node,     -- instances: Eq, Ord, Show, NFData, Binary, Hashable
     path,     -- :: Node -> [String]
     address,  -- :: Node -> NT.EndPointAddress
     mkNode,   -- :: [String] -> NT.EndPointAddress -> Node
@@ -49,7 +49,7 @@ import Control.Monad (when)
 import Data.Functor ((<$>))
 import Data.Hashable (Hashable, hashWithSalt, hash)
 import Data.IORef (readIORef)
-import Data.Serialize (Serialize, put, get)
+import Data.Binary (Binary, put, get)
 import qualified Network.Transport as NT (EndPointAddress(..))
 import System.IO (stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
@@ -103,7 +103,7 @@ instance Hashable Node where
 -- orphan instance
 -- NOTE: Can't derive this instance because 'nodeHash' field is not serialised
 --       and 'get' must ensure hyperstrictness
-instance Serialize Node where
+instance Binary Node where
   put n = put (path n) >>
           put (address n)
   get = do
@@ -175,9 +175,3 @@ dbgMsgRcvd   = 6  -- messages being handled
 dbgGIVar     = 7  -- op on a GIVar (globalising or writing to)
 dbgIVar      = 8  -- blocking/unblocking on IVar (only log event type)
 dbgGRef      = 9  -- registry update
-
-
------------------------------------------------------------------------------
--- missing (orphan) instances for NT.EndPointAddress
-
-deriving instance Serialize NT.EndPointAddress

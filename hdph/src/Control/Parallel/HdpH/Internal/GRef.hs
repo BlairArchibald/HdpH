@@ -9,7 +9,7 @@
 
 module Control.Parallel.HdpH.Internal.GRef
   ( -- * global references
-    GRef,       -- instances: Eq, Ord, Show, NFData, Serialize
+    GRef,       -- instances: Eq, Ord, Show, NFData, Binary
     at,         -- :: GRef a -> Node
 
     -- * predicates on global references
@@ -32,8 +32,8 @@ import Control.Monad (unless)
 import Data.Functor ((<$>))
 import Data.IORef (readIORef, atomicModifyIORef)
 import qualified Data.Map as Map (insert, delete, member, lookup)
-import Data.Serialize (Serialize)
-import qualified Data.Serialize (put, get)
+import Data.Binary (Binary)
+import qualified Data.Binary (put, get)
 import Unsafe.Coerce (unsafeCoerce)
 
 import Control.Parallel.HdpH.Internal.Location
@@ -100,11 +100,11 @@ instance NFData (GRef a) where
 
 -- orphan instance
 -- NOTE: Can't derive this instance because 'get' must ensure hyperstrictness
-instance Serialize (GRef a) where
-  put ref = Data.Serialize.put (at ref) >>
-            Data.Serialize.put (slot ref)
-  get = do node <- Data.Serialize.get
-           i <- Data.Serialize.get
+instance Binary (GRef a) where
+  put ref = Data.Binary.put (at ref) >>
+            Data.Binary.put (slot ref)
+  get = do node <- Data.Binary.get
+           i <- Data.Binary.get
            return $ mkGRef node i  -- 'mkGRef' ensures result is hyperstrict
 
 

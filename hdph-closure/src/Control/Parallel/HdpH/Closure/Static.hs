@@ -20,7 +20,7 @@
 
 module Control.Parallel.HdpH.Closure.Static
   ( -- * 'Static' type constructor
-    Static,      -- instances: Eq, Ord, Show, NFData, Serialize
+    Static,      -- instances: Eq, Ord, Show, NFData, Binary
 
     -- * introducing 'Static'
     staticAs,    -- :: a -> String -> Static a
@@ -51,8 +51,8 @@ import Data.Int (Int32)
 import Data.List (foldl')
 import qualified Data.Map as Map (empty, singleton, union, unions, keys, elems)
 import Data.Monoid (Monoid(mempty, mappend, mconcat))
-import Data.Serialize (Serialize)
-import qualified Data.Serialize (put, get)
+import Data.Binary (Binary)
+import qualified Data.Binary (put, get)
 import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -237,11 +237,11 @@ instance NFData (Static a) where
 
 
 -----------------------------------------------------------------------------
--- Serialize instance for 'Static'
+-- Binary instance for 'Static'
 
-instance Serialize (Static a) where
-  put = Data.Serialize.put . index
-  get = resolve <$> Data.Serialize.get
+instance Binary (Static a) where
+  put = Data.Binary.put . index
+  get = resolve <$> Data.Binary.get
         -- NOTES:
         -- o Hyperstrictness is enforced by 'resolve' (and by construction
         --   of the Static table).
