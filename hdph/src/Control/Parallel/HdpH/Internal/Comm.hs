@@ -41,7 +41,7 @@ import Control.Monad (when, unless)
 import Data.ByteString.Lazy (ByteString, toStrict, fromStrict, toChunks, fromChunks)
 import Data.Functor ((<$>))
 import Data.IORef (readIORef, writeIORef, atomicModifyIORef)
-import Data.Binary (encode, decode)
+import Data.Binary.Serialise.CBOR (serialise, deserialise)
 import Data.List (delete)
 
 import Network.Info (IPv4, ipv4, name, getNetworkInterfaces)
@@ -173,7 +173,7 @@ withCommDo conf0 action = do
   -- create a local end point (and this node)
   ep <- createEndPoint tp
   let !me = mkNode (path conf0) (NT.address ep)
-  let !me_enc = toStrict . encode $ me
+  let !me_enc = toStrict . serialise $ me
 
 --  hPutStrLn stderr ("DEBUG.withCommDo.1: " ++ show me) >> hFlush stderr
 
@@ -235,8 +235,8 @@ withCommDo conf0 action = do
   where doStartup cfg thisNode = do
           let backend = startupBackend cfg
           case backend of
-            UDP -> startupUDP (numProcs cfg) thisNode >>= return . map (decode . fromStrict)
-            TCP -> startupTCP cfg thisNode >>= return . map (decode . fromStrict)
+            UDP -> startupUDP (numProcs cfg) thisNode >>= return . map (deserialise . fromStrict)
+            TCP -> startupTCP cfg thisNode >>= return . map (deserialise . fromStrict)
 
 -- Return the IP address associated with the interface named in RTS config.
 discoverMyIP :: RTSConf -> IO IPv4

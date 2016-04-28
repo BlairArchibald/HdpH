@@ -11,7 +11,7 @@
 
 module Control.Parallel.HdpH.Internal.Location
   ( -- * node IDs (and their constitutent parts)
-    Node,     -- instances: Eq, Ord, Show, NFData, Binary, Hashable
+    Node,     -- instances: Eq, Ord, Show, NFData, Serialise, Hashable
     path,     -- :: Node -> [String]
     address,  -- :: Node -> NT.EndPointAddress
     mkNode,   -- :: [String] -> NT.EndPointAddress -> Node
@@ -49,7 +49,7 @@ import Control.Monad (when)
 import Data.Functor ((<$>))
 import Data.Hashable (Hashable, hashWithSalt, hash)
 import Data.IORef (readIORef)
-import Data.Binary (Binary, put, get)
+import Data.Binary.Serialise.CBOR (Serialise, encode, decode)
 import qualified Network.Transport as NT (EndPointAddress(..))
 import System.IO (stderr, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
@@ -103,15 +103,18 @@ instance Hashable Node where
 -- orphan instance
 -- NOTE: Can't derive this instance because 'nodeHash' field is not serialised
 --       and 'get' must ensure hyperstrictness
-instance Binary Node where
-  put n = put (path n) >>
-          put (address n)
-  get = do
-    p    <- get
-    addr <- get
+instance Serialise Node where
+  encode n = encode (path n) `mappend` encode (NT.endPointAddressToByteString $ address n)
+  decode = do
+    p    <- decode
+    addr <- decode
     return $! mkNode p addr
     -- Hyperstrictness guaranteed by ($!) and 'mkNode'.
 
+-- -- Missing from NT. It's just a Bytestring though
+instance Serialise NT.EndPointAddress where
+  encode = encode
+  decode = decode
 
 -----------------------------------------------------------------------------
 -- reading this node's own node ID

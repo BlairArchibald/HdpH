@@ -4,7 +4,8 @@
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE ScopedTypeVariables #-}  -- req'd for type annotations
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BangPatterns  #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Control.Parallel.HdpH.Internal.Sparkpool
   ( -- * spark pool monad
@@ -23,7 +24,7 @@ module Control.Parallel.HdpH.Internal.Sparkpool
     putLocalSparkWithPrio,
 
     -- * messages
-    Msg(..),         -- instances: Show, NFData, Binary
+    Msg(..),         -- instances: Show, NFData, Serialise
 
     -- * handle messages related to fishing
     dispatch,        -- :: Msg m -> SparkM m ()
@@ -53,10 +54,11 @@ import Data.Functor ((<$>))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef)
 import Data.List (insertBy, sortBy)
 import Data.Ord (comparing)
-import Data.Binary (Binary, encode)
-import qualified Data.Binary (put, get)
+import Data.Binary.Serialise.CBOR (Serialise, encode, decode, serialise, deserialise)
 import Data.Word (Word8)
 import System.Random (randomRIO)
+
+import GHC.Generics (Generic)
 
 import Control.Parallel.HdpH.Conf
        (RTSConf( maxHops
@@ -392,6 +394,7 @@ data Msg m = TERM        -- termination message (broadcast from root and back)
                !Node       -- victim
            | PUSH        -- eagerly pushing work
                (Spark m)   -- spark
+          deriving (Generic)
 
 -- Invariants for 'FISH thief avoid candidates sources fwd :: Msg m':
 -- * Lists 'candidates' and 'sources' are sorted in order of ascending
@@ -436,45 +439,45 @@ instance NFData (Msg m) where
 
 
 -- TODO: Derive this instance.
-instance Binary (Msg m) where
-  put (TERM root)               = Data.Binary.put (0 :: Word8) >>
-                                  Data.Binary.put root
-  put (FISH thief avoid candidates sources fwd)
-                                = Data.Binary.put (1 :: Word8) >>
-                                  Data.Binary.put thief >>
-                                  Data.Binary.put avoid >>
-                                  Data.Binary.put candidates >>
-                                  Data.Binary.put sources >>
-                                  Data.Binary.put fwd
-  put (NOWORK)                  = Data.Binary.put (2 :: Word8)
-  put (SCHEDULE spark r p victim)
-                                = Data.Binary.put (3 :: Word8) >>
-                                  Data.Binary.put spark >>
-                                  Data.Binary.put r >>
-                                  Data.Binary.put p >>
-                                  Data.Binary.put victim
-  put (PUSH spark)              = Data.Binary.put (4 :: Word8) >>
-                                  Data.Binary.put spark
+instance Serialise (Msg m)
+  -- put (TERM root)               = Data.Binary.put (0 :: Word8) >>
+  --                                 Data.Binary.put root
+  -- put (FISH thief avoid candidates sources fwd)
+  --                               = Data.Binary.put (1 :: Word8) >>
+  --                                 Data.Binary.put thief >>
+  --                                 Data.Binary.put avoid >>
+  --                                 Data.Binary.put candidates >>
+  --                                 Data.Binary.put sources >>
+  --                                 Data.Binary.put fwd
+  -- put (NOWORK)                  = Data.Binary.put (2 :: Word8)
+  -- put (SCHEDULE spark r p victim)
+  --                               = Data.Binary.put (3 :: Word8) >>
+  --                                 Data.Binary.put spark >>
+  --                                 Data.Binary.put r >>
+  --                                 Data.Binary.put p >>
+  --                                 Data.Binary.put victim
+  -- put (PUSH spark)              = Data.Binary.put (4 :: Word8) >>
+  --                                 Data.Binary.put spark
 
-  get = do tag <- Data.Binary.get
-           case tag :: Word8 of
-             0 -> do root <- Data.Binary.get
-                     return $ TERM root
-             1 -> do thief      <- Data.Binary.get
-                     avoid      <- Data.Binary.get
-                     candidates <- Data.Binary.get
-                     sources    <- Data.Binary.get
-                     fwd        <- Data.Binary.get
-                     return $ FISH thief avoid candidates sources fwd
-             2 -> do return $ NOWORK
-             3 -> do spark  <- Data.Binary.get
-                     r      <- Data.Binary.get
-                     p      <- Data.Binary.get
-                     victim <- Data.Binary.get
-                     return $ SCHEDULE spark r p victim
-             4 -> do spark  <- Data.Binary.get
-                     return $ PUSH spark
-             _ -> error "panic in instance Binary (Msg m): tag out of range"
+  -- get = do tag <- Data.Binary.get
+  --          case tag :: Word8 of
+  --            0 -> do root <- Data.Binary.get
+  --                    return $ TERM root
+  --            1 -> do thief      <- Data.Binary.get
+  --                    avoid      <- Data.Binary.get
+  --                    candidates <- Data.Binary.get
+  --                    sources    <- Data.Binary.get
+  --                    fwd        <- Data.Binary.get
+  --                    return $ FISH thief avoid candidates sources fwd
+  --            2 -> do return $ NOWORK
+  --            3 -> do spark  <- Data.Binary.get
+  --                    r      <- Data.Binary.get
+  --                    p      <- Data.Binary.get
+  --                    victim <- Data.Binary.get
+  --                    return $ SCHEDULE spark r p victim
+  --            4 -> do spark  <- Data.Binary.get
+  --                    return $ PUSH spark
+  --            _ -> error "panic in instance Binary (Msg m): tag out of range"
 
 
 -----------------------------------------------------------------------------
@@ -544,9 +547,9 @@ sendFISH r_min = do
                   cand:cands -> (cand, FISH thief [] cands [] True)
                   []         -> (thief, NOWORK)  -- no candidates --> NOWORK
       -- send FISH (or NOWORK) message
-      debug dbgMsgSend $ let msg_size = BS.length (encode msg) in
+      debug dbgMsgSend $ let msg_size = BS.length (serialise msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send target $ encode msg
+      liftIO $ Comm.send target $ serialise msg
       case msg of
         FISH _ _ _ _ _ -> getFishSentCtr >>= incCtr  -- update stats
         _              -> return ()
@@ -580,17 +583,17 @@ handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
   case maybe_spark of
     Just (spark, r, prio) -> do -- compose and send SCHEDULE
       let scheduleMsg = SCHEDULE spark r prio me
-      debug dbgMsgSend $ let msg_size = BS.length (encode scheduleMsg) in
+      debug dbgMsgSend $ let msg_size = BS.length (serialise scheduleMsg) in
         show scheduleMsg ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send thief $ encode scheduleMsg
+      liftIO $ Comm.send thief $ serialise scheduleMsg
     Nothing -> do
       maybe_src <- readSparkOrigHist
       -- compose FISH message to forward
       let (target, forwardMsg) = forwardFISH me maybe_src msg
       -- send message
-      debug dbgMsgSend $ let msg_size = BS.length (encode forwardMsg) in
+      debug dbgMsgSend $ let msg_size = BS.length (serialise forwardMsg) in
         show forwardMsg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send target $ encode forwardMsg
+      liftIO $ Comm.send target $ serialise forwardMsg
 handleFISH _ = error "panic in handleFISH: not a FISH message"
 
 -- Auxiliary function, called by 'handleFISH' when there is nought to schedule.

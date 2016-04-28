@@ -67,8 +67,6 @@ import qualified Data.ByteString
 import qualified Data.ByteString.Lazy
        as Lazy (ByteString, pack, unpack)
 import Data.Functor ((<$>))
-import Data.Binary (Binary)
-import qualified Data.Binary (encode, decode)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Data.Word (Word8)
 import System.Random (randomRIO)

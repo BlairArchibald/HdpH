@@ -32,8 +32,7 @@ import Control.Monad (unless)
 import Data.Functor ((<$>))
 import Data.IORef (readIORef, atomicModifyIORef)
 import qualified Data.Map as Map (insert, delete, member, lookup)
-import Data.Binary (Binary)
-import qualified Data.Binary (put, get)
+import Data.Binary.Serialise.CBOR (Serialise, encode, decode)
 import Unsafe.Coerce (unsafeCoerce)
 
 import Control.Parallel.HdpH.Internal.Location
@@ -100,12 +99,11 @@ instance NFData (GRef a) where
 
 -- orphan instance
 -- NOTE: Can't derive this instance because 'get' must ensure hyperstrictness
-instance Binary (GRef a) where
-  put ref = Data.Binary.put (at ref) >>
-            Data.Binary.put (slot ref)
-  get = do node <- Data.Binary.get
-           i <- Data.Binary.get
-           return $ mkGRef node i  -- 'mkGRef' ensures result is hyperstrict
+instance Serialise (GRef a) where
+  encode ref = encode (at ref) `mappend` encode (slot ref)
+  decode = do node <- decode
+              i    <- decode
+              return $ mkGRef node i  -- 'mkGRef' ensures result is hyperstrict
 
 
 -----------------------------------------------------------------------------

@@ -5,6 +5,7 @@
 
 {-# LANGUAGE ScopedTypeVariables #-}  -- for type annotations in Static decl
 {-# LANGUAGE TemplateHaskell #-}      -- req'd for 'mkClosure', etc
+{-# LANGUAGE BangPatterns   #-}      -- req'd for 'mkClosure', etc
 
 module Control.Parallel.HdpH.Strategies
   ( -- * Strategy type
@@ -91,7 +92,10 @@ import Control.DeepSeq (NFData, deepseq)
 import Control.Monad (zipWithM, zipWithM_)
 import Data.Functor ((<$>))
 import Data.List (transpose)
-import Data.Monoid (mconcat)
+import Data.Monoid (mconcat, (<>))
+import Data.Binary.Serialise.CBOR (Serialise, encode, decode)
+import Data.Binary.Serialise.CBOR.Encoding (encodeListLen)
+import Data.Binary.Serialise.CBOR.Decoding (decodeListLenOf)
 import System.Random (randomRIO)
 
 import Control.Parallel.HdpH 
@@ -827,6 +831,36 @@ pushDivideAndConquer_abs :: ([Node],
 pushDivideAndConquer_abs (ns, trivial_clo, decompose_clo, combine_clo, f_clo) =
   Thunk $ pushDivideAndConquer ns trivial_clo decompose_clo combine_clo f_clo
 
+-- Missing Serialise Instances
+instance (Serialise a, Serialise b, Serialise c, Serialise d) => Serialise (a,b,c,d) where
+    encode (a,b,c, d) = encodeListLen 4
+                     <> encode a
+                     <> encode b
+                     <> encode c
+                     <> encode d
+
+    decode = do decodeListLenOf 4
+                !w <- decode
+                !x <- decode
+                !y <- decode
+                !z <- decode
+                return (w, x, y, z)
+
+instance (Serialise a, Serialise b, Serialise c, Serialise d, Serialise e) => Serialise (a,b,c,d,e) where
+    encode (a,b,c,d,e) = encodeListLen 5
+                       <> encode a
+                       <> encode b
+                       <> encode c
+                       <> encode d
+                       <> encode e
+
+    decode = do decodeListLenOf 5
+                !v <- decode
+                !w <- decode
+                !x <- decode
+                !y <- decode
+                !z <- decode
+                return (v, w, x, y, z)
 
 -----------------------------------------------------------------------------
 -- Static declaration (must be at end of module)

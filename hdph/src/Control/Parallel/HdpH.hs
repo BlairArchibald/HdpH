@@ -79,7 +79,7 @@ import Data.Functor ((<$>))
 import Data.Hashable (Hashable)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Monoid (mconcat)
-import Data.Binary (Binary)
+import Data.Binary.Serialise.CBOR (Serialise)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 
 import Control.Parallel.HdpH.Conf                            -- re-export whole module
@@ -144,7 +144,7 @@ import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (Priority)
 -- A 'Node' should be thought of as an abstract identifier which instantiates
 -- the classes 'Eq', 'Ord', 'Hashable', 'Show', 'NFData' and 'Binary'.
 newtype Node = Node Location.Node
-                 deriving (Eq, Ord, Hashable, NFData, Binary)
+                 deriving (Eq, Ord, Hashable, NFData, Serialise)
 
 -- Show instance (mainly for debugging)
 instance Show Node where
@@ -170,7 +170,7 @@ newtype IVar a = IVar (IVar.IVar RTS a)
 -- Unlike IVars, GIVars can be compared and serialised.
 -- They can also be written to remotely by the operation 'rput'.
 newtype GIVar a = GIVar (IVar.GIVar RTS a)
-                  deriving (Eq, Ord, NFData, Binary)
+                  deriving (Eq, Ord, NFData, Serialise)
 
 -- Show instance (mainly for debugging)
 instance Show (GIVar a) where
