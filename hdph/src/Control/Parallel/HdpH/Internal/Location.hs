@@ -113,8 +113,9 @@ instance Serialise Node where
 
 -- -- Missing from NT. It's just a Bytestring though
 instance Serialise NT.EndPointAddress where
-  encode = encode
-  decode = decode
+  encode = encode . NT.endPointAddressToByteString
+  decode = do x <- decode
+              return $ NT.EndPointAddress x
 
 -----------------------------------------------------------------------------
 -- reading this node's own node ID
