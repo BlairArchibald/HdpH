@@ -100,7 +100,7 @@ module Control.Parallel.HdpH.Closure
 import Prelude
 import Control.DeepSeq (NFData, deepseq)
 import Data.Monoid (mconcat)
-import Data.Binary (Binary)
+import Data.Binary.Serialise.CBOR (Serialise)
 
 import Control.Parallel.HdpH.Closure.Internal   -- re-export whole module
 import Control.Parallel.HdpH.Closure.Static
@@ -150,7 +150,7 @@ import Control.Parallel.HdpH.Closure.Static
 -- $Deserialisation
 --
 -- Deserialising a serialised value via the methods of class
--- @'Data.Binary.Binary'@ (or @'Data.Binary.Binary'@) is not type safe.
+-- @'Data.Binary.Serialise.CBOR'@ is not type safe.
 -- For instance, the compiler will happily assign type @Int -> Bool@ to
 --
 -- > decodeBool . encodeInt where
@@ -294,24 +294,24 @@ import Control.Parallel.HdpH.Closure.Static
 -- The first example is the function @toClosure@ which converts any suitable
 -- value into a Closure, fully forcing the value upon serialisation. The
 -- /suitable/ values are those whose type is an instance of both classes
--- @'Data.Binary.Binary'@ and @'Control.DeepSeq.NFData'@, so one would
+-- @'Data.Binary.Serialise.CBOR'@ and @'Control.DeepSeq.NFData'@, so one would
 -- expect @toClosure@ to have the  following implementation and @'Static'@
 -- declaration:
 --
--- > toClosure :: (NFData a, Binary a) => a -> Closure a
+-- > toClosure :: (NFData a, Serialise a) => a -> Closure a
 -- > toClosure val = $(mkClosure [| id val |])
 -- >
 -- > declare $(static 'id)
 --
 -- However, this does not compile - the last line complains from an ambiguous
--- type variable @a@ in the constrait @(NFData a, Binary a)@.
+-- type variable @a@ in the constrait @(NFData a, Serialise a)@.
 --
 -- The solution is to define a new type class @ToClosure@ as a subclass of
--- @'Data.Binary.Binary'@ and @'Control.DeepSeq.NFData'@, and use
+-- @'Data.Binary.Serialise.CBOR'@ and @'Control.DeepSeq.NFData'@, and use
 -- instances of @ToClosure@ to index a family of Closures. The indexing is
 -- done by @locToClosure@, the only member of class @ToClosure@, as follows.
 --
--- > class (NFData a, Binary a) => ToClosure a where
+-- > class (NFData a, Serialise a) => ToClosure a where
 -- >   locToClosure :: LocT a
 -- >
 -- > toClosure :: (ToClosure a) => a -> Closure a
@@ -331,7 +331,7 @@ import Control.Parallel.HdpH.Closure.Static
 -- @'Static'@ table.)
 --
 -- What this achieves is reducing the constraint on @toClosure@ from
--- @'Data.Binary.Binary'@ and @'Control.DeepSeq.NFData'@ to @ToClosure@.
+-- @'Data.Binary.Serialise.CBOR'@ and @'Control.DeepSeq.NFData'@ to @ToClosure@.
 -- Hence @toClosure@ is only available for types for which the programmer
 -- explicitly instantiates  @ToClosure@. These instances are very simple,
 -- see the following two samples.
@@ -546,7 +546,7 @@ import Control.Parallel.HdpH.Closure.Static
 -- | @toClosure x@ constructs a value Closure wrapping @x@, provided the
 -- type of @x@ is an instance of class @'ToClosure'@.
 -- Note that the serialised representation of the resulting Closure stores a
--- serialised representation (as per class @'Data.Binary.Binary'@) of
+-- serialised representation (as per class @'Data.Binary.Serialise.CBOR'@) of
 -- @x@, so serialising the resulting Closure will force @x@ (hence could be
 -- costly). However, Closure construction itself is cheap.
 toClosure :: (ToClosure a) => a -> Closure a
@@ -559,9 +559,9 @@ toClosure_abs val = Thunk val
 
 -- | Indexing class, recording types which support the @'toClosure'@ operation;
 -- see the tutorial below for a more thorough explanation.
--- Note that @ToClosure@ is a subclass of @'Data.Binary.Binary'@
+-- Note that @ToClosure@ is a subclass of @'Data.Binary.Serialise.CBOR'@
 -- and @'Control.DeepSeq.NFData'@.
-class (NFData a, Binary a) => ToClosure a where
+class (NFData a, Serialise a) => ToClosure a where
   -- | Only method of class @ToClosure@, recording the source location
   -- where an instance of @ToClosure@ is declared.
   locToClosure :: LocT a

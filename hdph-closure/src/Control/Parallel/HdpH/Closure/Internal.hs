@@ -26,7 +26,7 @@ module Control.Parallel.HdpH.Closure.Internal
     here,             -- :: ExpQ
 
     -- Closure type constructor
-    Closure,          -- instances: Show, NFData, Binary
+    Closure,          -- instances: Show, NFData, Serialise
     
     -- Closure dictionary type constructor
     CDict,            -- no instances
@@ -49,7 +49,10 @@ module Control.Parallel.HdpH.Closure.Internal
 import Prelude hiding (exp)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (unless)
-import Data.Binary (Binary(put, get), Get, Put)
+import Data.Monoid ((<>))
+import Data.Binary.Serialise.CBOR (Serialise, encode, decode)
+import Data.Binary.Serialise.CBOR.Encoding (Encoding)
+import Data.Binary.Serialise.CBOR.Decoding (Decoder)
 import Language.Haskell.TH
        (Q, Exp(AppE, VarE, LitE, TupE, ConE), ExpQ,
         Type(AppT, ArrowT, ConT, ForallT),
@@ -91,15 +94,15 @@ newtype Thunk a = Thunk a
 
 -- | Abstract closure dictionary.
 data CDict env a =
-       CDict { putEnv :: env -> Put,       -- environment serialiser
-               getEnv :: Get env,          -- environment deserialiser
+       CDict { putEnv :: env -> Encoding,  -- environment serialiser
+               getEnv :: Decoder env,          -- environment deserialiser
                rnfEnv :: env -> (),        -- environment normaliser
                absEnv :: env -> Thunk a }  -- environment abstraction
 
 -- | Construct a closure dictionary from a given environment abstraction.
-mkCDict :: (NFData env, Binary env) => (env -> Thunk a) -> CDict env a
+mkCDict :: (NFData env, Serialise env) => (env -> Thunk a) -> CDict env a
 mkCDict env_abs =
-  CDict { putEnv = put, getEnv = get, rnfEnv = rnf, absEnv = env_abs }
+  CDict { putEnv = encode, getEnv = decode, rnfEnv = rnf, absEnv = env_abs }
 
 
 -- | Abstract type of explicit closures.
@@ -117,12 +120,11 @@ instance NFData (Closure a) where
   rnf (Closure st_dict env) = rnfEnv (unstatic st_dict) env
 
 -- Explicit closures are serialisable (using the static dictionary).
-instance Binary (Closure a) where
-  put (Closure st_dict env) = do put st_dict 
-                                 putEnv (unstatic st_dict) env
-  get = do st_dict <- get
-           env <- getEnv (unstatic st_dict)
-           return (Closure st_dict env)
+instance Serialise (Closure a) where
+  encode (Closure st_dict env) = encode st_dict <> putEnv (unstatic st_dict) env
+  decode = do st_dict <- decode
+              env     <- getEnv (unstatic st_dict)
+              return (Closure st_dict env)
 
 instance Show (Closure a) where  -- for debugging only; show static dict only
   showsPrec _ (Closure st_dict _env) =
@@ -174,7 +176,7 @@ mkClosure expQ = do
 
 -- | Template Haskell transformation constructing a family of Closures from an
 -- expression. The family is indexed by location (that's what the suffix @Loc@
--- stands for).
+-- stands for)))
 -- The expression must either be a single static closure (in which case the
 -- result is a family of /static/ Closures), or an application of an environment
 -- abstraction to a tuple of variables.
@@ -227,7 +229,7 @@ staticInternal prf is_abs name = do
 
 -- Called by 'staticInternal' if argument names an environment abstraction.
 {-# INLINE mkStatic #-}
-mkStatic :: (NFData env, Binary env)
+mkStatic :: (NFData env, Serialise env)
          => (env -> Thunk a) -> String -> Static (CDict env a)
 mkStatic env_abs label =
   staticAs (mkCDict env_abs) label
@@ -261,7 +263,7 @@ staticLocInternal prf is_abs name = do
 
 -- Called by 'staticLoc' if argument names an environment abstraction.
 {-# INLINE mkStaticLoc #-}
-mkStaticLoc :: (NFData env, Binary env)
+mkStaticLoc :: (NFData env, Serialise env)
             => (env -> Thunk a) -> String -> (LocT a -> Static (CDict env a))
 mkStaticLoc env_abs label =
   \ loc -> staticAs (mkCDict env_abs) $
