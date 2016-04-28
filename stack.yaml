@@ -1,11 +1,17 @@
 flags:
   hdph-closure:
     buildtest: false
+  binary-serialise-cbor:
+    newtime15: true
 packages:
 - hdph-closure/
 - hdph/
 - location:
     git: git@github.com:haskell-distributed/network-transport-tcp.git
     commit: c2a316dc93a6d666e5cae61d5676f6a3ec5a7f83
+- location:
+    git: https://github.com/well-typed/binary-serialise-cbor.git
+    commit: 2ffa6354db041fc32d607f3d50d68ee8b340d11d
+
 extra-deps: []
 resolver: lts-5.12
