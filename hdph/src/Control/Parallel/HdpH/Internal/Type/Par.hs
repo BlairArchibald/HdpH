@@ -6,17 +6,15 @@
 module Control.Parallel.HdpH.Internal.Type.Par
   ( -- * Par monad, threads and sparks
     ParM(..),
+    unPar,
     Thread(..),
     ThreadCont(..),
     Spark       -- synonym: Spark m = Closure (ParM m ())
   ) where
 
 import Prelude
-import Control.Applicative (Applicative, pure, (<*>))
-import Control.Monad (ap)
-
+import Control.Monad.Cont
 import Control.Parallel.HdpH.Closure (Closure)
-
 
 -----------------------------------------------------------------------------
 -- Par monad, based on ideas from
@@ -25,21 +23,12 @@ import Control.Parallel.HdpH.Closure (Closure)
 
 -- 'ParM m' is a continuation monad, specialised to the return type 'Thread m';
 -- 'm' abstracts a monad encapsulating the underlying state.
-newtype ParM m a = Par { unPar :: (a -> Thread m) -> Thread m }
+-- newtype ParM m a = Par { unPar :: (a -> Thread m) -> Thread m }
 
-instance Functor (ParM m) where
-    fmap f p = Par $ \ c -> unPar p (c . f)
+type ParM m a = Cont (Thread m) a
 
--- The Monad instance is where we differ from Control.Monad.Cont,
--- the difference being the use of strict application ($!).
-instance Monad (ParM m) where
-    return a = Par $ \ c -> c $! a
-    p >>= k  = Par $ \ c -> unPar p $ \ a -> unPar (k $! a) c
-
-instance Applicative (ParM m) where
-    pure  = return
-    (<*>) = ap
-
+unPar :: Cont r a -> (a -> r) -> r
+unPar = runCont
 
 -- A thread is a monadic action returning a ThreadCont (telling the scheduler
 -- how to continue after executing the monadic action).
