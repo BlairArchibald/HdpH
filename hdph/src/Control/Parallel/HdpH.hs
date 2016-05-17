@@ -106,8 +106,9 @@ import Control.Parallel.HdpH.Internal.Sparkpool (putLocalSpark,
                                                  putLocalSparkWithPrio)
 import Control.Parallel.HdpH.Internal.Threadpool (putThread, putThreads)
 import Control.Parallel.HdpH.Internal.Type.Par
-       (ParM(Par), Thread(Atom), ThreadCont(ThreadCont, ThreadDone))
+       (ParM, Thread(Atom), ThreadCont(ThreadCont, ThreadDone))
 import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (Priority)
+import Control.Monad.Cont (cont)
 
 -----------------------------------------------------------------------------
 -- $Intro
@@ -210,7 +211,7 @@ isMainRTS = liftIO Comm.isRoot
 -- by plugging in 'RTS', the state monad of the runtime system.
 -- Since neither 'ParM' nor 'RTS' are exported, 'Par' can be considered
 -- abstract.
-type Par = ParM RTS
+type Par a = ParM RTS a
 -- A newtype would be nicer than a type synonym but the resulting
 -- wrapping and unwrapping destroys readability (if it is at all possible,
 -- eg. inside Closures).
@@ -227,14 +228,14 @@ type Par = ParM RTS
 atom :: (Bool -> RTS a) -> Par a
 {-# INLINE atom #-}
 atom m =
-  Par $ \ c -> Atom $ \ hi -> m hi >>= return . ThreadCont [] . c
+  cont $ \ c -> Atom $ \ hi -> m hi >>= return . ThreadCont [] . c
 
 -- lifting RTS action into the Par monad, potentially injecting some
 -- high priority threads; don't export
 atomMayInjectHi :: (Bool -> RTS ([Thread RTS], a)) -> Par a
 {-# INLINE atomMayInjectHi #-}
 atomMayInjectHi m =
-  Par $ \ c -> Atom $ \ hi -> m hi >>= \ (hts, x) ->
+  cont $ \ c -> Atom $ \ hi -> m hi >>= \ (hts, x) ->
                               return $ ThreadCont hts $ c x
 
 -- lifting an RTS action that may potentially stop into the Par monad;
@@ -244,7 +245,7 @@ atomMayInjectHi m =
 atomMayStop :: ((a -> Thread RTS) -> Bool -> RTS (Maybe a)) -> Par a
 {-# INLINE atomMayStop #-}
 atomMayStop m =
-  Par $ \ c -> Atom $ \ hi -> m c hi >>=
+  cont $ \ c -> Atom $ \ hi -> m c hi >>=
                               maybe (return $ ThreadDone [])
                                     (return . ThreadCont [] . c)
 
