@@ -7,5 +7,8 @@ packages:
 - location:
     git: git@github.com:haskell-distributed/network-transport-tcp.git
     commit: c2a316dc93a6d666e5cae61d5676f6a3ec5a7f83
+- location:
+    git: https://github.com/haskell-distributed/network-transport.git
+    commit: fb42d1ad37c20a91fb8918d0f93d59ff62a618ff
 extra-deps: []
 resolver: lts-5.12
