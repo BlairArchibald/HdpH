@@ -10,5 +10,9 @@ packages:
 - location:
     git: https://github.com/haskell-distributed/network-transport.git
     commit: fb42d1ad37c20a91fb8918d0f93d59ff62a618ff
-extra-deps: []
+
+extra-deps:
+- transformers-0.5.2.0
+- transformers-compat-0.5.1.4
+
 resolver: lts-5.12
