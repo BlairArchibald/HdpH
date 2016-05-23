@@ -5,22 +5,22 @@
 
 module Control.Parallel.HdpH.Internal.IVar
   ( -- * local IVar type
-    IVar,       -- synonym: IVar m a = IORef <IVarContent m a>
+    IVar,       -- synonym: IVar a = IORef <IVarContent m a>
 
     -- * operations on local IVars
-    newIVar,    -- :: IO (IVar m a)
-    putIVar,    -- :: IVar m a -> a -> IO ([Thread m], [Thread m])
-    getIVar,    -- :: Bool -> IVar m a -> (a -> Thread m) -> IO (Maybe a)
-    pollIVar,   -- :: IVar m a -> IO (Maybe a)
-    probeIVar,  -- :: IVar m a -> IO Bool
+    newIVar,    -- :: IO (IVar a)
+    putIVar,    -- :: IVar a -> a -> IO ([Thread], [Thread])
+    getIVar,    -- :: Bool -> IVar a -> (a -> Thread) -> IO (Maybe a)
+    pollIVar,   -- :: IVar a -> IO (Maybe a)
+    probeIVar,  -- :: IVar a -> IO Bool
 
     -- * global IVar type
-    GIVar,      -- synonym: GIVar m a = GRef (IVar m a)
+    GIVar,      -- synonym: GIVar a = GRef (IVar a)
 
     -- * operations on global IVars
-    globIVar,   -- :: Int -> IVar m a -> IO (GIVar m a)
-    hostGIVar,  -- :: GIVar m a -> Node
-    putGIVar,    -- :: Int -> GIVar m a -> a -> IO ([Thread m], [Thread m])
+    globIVar,   -- :: Int -> IVar a -> IO (GIVar a)
+    hostGIVar,  -- :: GIVar a -> Node
+    putGIVar,    -- :: Int -> GIVar a -> a -> IO ([Thread], [Thread])
     tryPutGIVar
   ) where
 
@@ -42,10 +42,10 @@ import Control.Parallel.HdpH.Internal.Type.Par (Thread)
 -- An IVar is a mutable reference to either a value or two lists (high
 -- and low priority) of continuations blocked waiting for a value;
 -- the parameter 'm' abstracts a monad (cf. module HdpH.Internal.Type.Par).
-type IVar m a = IORef (IVarContent m a)
+type IVar a = IORef (IVarContent a)
 
-data IVarContent m a = Full a
-                     | Blocked [a -> Thread m] [a -> Thread m]
+data IVarContent a = Full a
+                   | Blocked [a -> Thread] [a -> Thread]
 
 
 -----------------------------------------------------------------------------
@@ -53,7 +53,7 @@ data IVarContent m a = Full a
 --    [1] Marlow et al. "A monad for deterministic parallelism". Haskell 2011.
 
 -- Create a new, empty IVar.
-newIVar :: IO (IVar m a)
+newIVar :: IO (IVar a)
 newIVar = newIORef (Blocked [] [])
 
 
@@ -61,7 +61,7 @@ newIVar = newIORef (Blocked [] [])
 -- of blocked threads.
 -- Unlike [1], multiple writes fail silently (ie. they do not change
 -- the value stored, and return empty lists of threads).
-putIVar :: IVar m a -> a -> IO ([Thread m], [Thread m])
+putIVar :: IVar a -> a -> IO ([Thread], [Thread])
 putIVar v x = do
   e <- readIORef v
   case e of
@@ -80,7 +80,7 @@ putIVar v x = do
                                              return (hts,lts)
       where
      -- fill_and_unblock :: IVarContent m a ->
-     --                       (IVarContent m a, Maybe ([Thread m], [Thread m]))
+     --                       (IVarContent m a, Maybe ([Thread], [Thread]))
         fill_and_unblock st =
           case st of
             Full _          -> (st,     Nothing)
@@ -90,7 +90,7 @@ putIVar v x = do
 -- Read from the given IVar 'v' and return the value if it is full.
 -- Otherwise return Nothing but add the given continuation 'c' to the list of
 -- blocked continuations (to the high priority ones iff 'hi' is True).
-getIVar :: Bool -> IVar m a -> (a -> Thread m) -> IO (Maybe a)
+getIVar :: Bool -> IVar a -> (a -> Thread) -> IO (Maybe a)
 getIVar hi v c = do
   e <- readIORef v
   case e of
@@ -111,7 +111,7 @@ getIVar hi v c = do
 
 -- Poll the given IVar 'v' and return its value if full, Nothing otherwise.
 -- Does not block.
-pollIVar :: IVar m a -> IO (Maybe a)
+pollIVar :: IVar a -> IO (Maybe a)
 pollIVar v = do
   e <- readIORef v
   case e of
@@ -121,7 +121,7 @@ pollIVar v = do
 
 -- Probe whether the given IVar is full, returning True if it is.
 -- Does not block.
-probeIVar :: IVar m a -> IO Bool
+probeIVar :: IVar a -> IO Bool
 probeIVar v = isJust <$> pollIVar v
 
 
@@ -132,20 +132,20 @@ probeIVar v = isJust <$> pollIVar v
 -- NOTE: The HdpH interface will restrict the type parameter 'a' to 
 --       'Closure b' for some type 'b', but but the type constructor 'GIVar' 
 --       does not enforce this restriction.
-type GIVar m a = GRef (IVar m a)
+type GIVar a = GRef (IVar a)
 
 
 -----------------------------------------------------------------------------
 -- operations on global IVars
 
 -- Returns node hosting given global IVar.
-hostGIVar :: GIVar m a -> Node
+hostGIVar :: GIVar a -> Node
 hostGIVar = at
 
 
 -- Globalise the given IVar;
 -- the scheduler ID argument may be used for logging.
-globIVar :: Int -> IVar m a -> IO (GIVar m a)
+globIVar :: Int -> IVar a -> IO (GIVar a)
 globIVar _schedID v = do
   gv <- globalise v
   debug dbgGIVar $ "New global IVar " ++ show gv
@@ -156,21 +156,21 @@ globIVar _schedID v = do
 -- two lists of blocked threads. Like putIVar, multiple writes fail silently
 -- (as do writes to a dead global IVar);
 -- the scheduler ID argument may be used for logging.
-putGIVar :: Int -> GIVar m a -> a -> IO ([Thread m], [Thread m])
+putGIVar :: Int -> GIVar a -> a -> IO ([Thread], [Thread])
 putGIVar _schedID gv x = do
   debug dbgGIVar $ "Put to global IVar " ++ show gv
   ts <- withGRef gv (\ v -> putIVar v x) (return ([],[]))
   freeNow gv  -- free 'gv' immediately; could use 'free' instead of 'freeNow'
   return ts
 
-tryPutGIVar :: Int -> GIVar m a -> a -> IO (Bool, [Thread m], [Thread m])
+tryPutGIVar :: Int -> GIVar a -> a -> IO (Bool, [Thread], [Thread])
 tryPutGIVar _schedID gv x = do
   debug dbgGIVar $ "Put to global IVar " ++ show gv
   ts <- withGRef gv (\ v -> tryPutIVar v x) (return (False, [], []))
   freeNow gv  -- free 'gv' immediately; could use 'free' instead of 'freeNow'
   return ts
 
-tryPutIVar :: IVar m a -> a -> IO (Bool, [Thread m], [Thread m])
+tryPutIVar :: IVar a -> a -> IO (Bool, [Thread], [Thread])
 tryPutIVar v x = do
   e <- readIORef v
   case e of
@@ -189,7 +189,7 @@ tryPutIVar v x = do
                                              return (True, hts,lts)
       where
      -- fill_and_unblock :: IVarContent m a ->
-     --                       (IVarContent m a, Maybe ([Thread m], [Thread m]))
+     --                       (IVarContent m a, Maybe ([Thread], [Thread]))
         fill_and_unblock st =
           case st of
             Full _          -> (st,     Nothing)

@@ -19,9 +19,9 @@ module Control.Parallel.HdpH.Internal.Scheduler
     schedulerID,  -- :: RTS Int
 
     -- * converting and executing threads
-    mkThread,     -- :: ParM RTS a -> Thread RTS
-    execThread,   -- :: Thread RTS -> RTS ()
-    execHiThread, -- :: Thread RTS -> RTS ()
+    mkThread,     -- :: ParM RTS a -> Thread
+    execThread,   -- :: Thread -> RTS ()
+    execHiThread, -- :: Thread -> RTS ()
 
     -- * pushing sparks
     sendPUSH      -- :: Spark RTS -> Node -> RTS ()
@@ -64,7 +64,7 @@ import Control.Parallel.HdpH.Internal.Type.Par
 -- RTS monad
 
 -- The RTS monad hides monad stack (IO, SparkM, ThreadM) as abstract.
-newtype RTS a = RTS { unRTS :: ThreadM RTS a }
+newtype RTS a = RTS { unRTS :: ThreadM a }
                 deriving (Functor, Monad, Applicative)
 
 
@@ -163,10 +163,10 @@ run_ conf main = do
 
 
 -- lifting lower layers
-liftThreadM :: ThreadM RTS a -> RTS a
+liftThreadM :: ThreadM a -> RTS a
 liftThreadM = RTS
 
-liftSparkM :: SparkM RTS a -> RTS a
+liftSparkM :: SparkM a -> RTS a
 liftSparkM = liftThreadM . Threadpool.liftSparkM
 
 liftIO :: IO a -> RTS a
@@ -182,17 +182,17 @@ schedulerID = liftThreadM poolID
 -- cooperative scheduling
 
 -- Converts 'Par' computations into threads (of whatever priority).
-mkThread :: ParM RTS a -> Thread RTS
+mkThread :: ParM a -> Thread
 mkThread p = unPar p $ \ _c -> Atom (\ _ -> return $ ThreadDone [])
 
 
 -- Execute the given (low priority) thread until it blocks or terminates.
-execThread :: Thread RTS -> RTS ()
+execThread :: Thread -> RTS ()
 execThread = runThread (return ())
 
 -- Execute the given (high priority) thread until it and all its high
 -- priority descendents block or terminate.
-execHiThread :: Thread RTS -> RTS ()
+execHiThread :: Thread -> RTS ()
 execHiThread = runHiThreads (return ()) []
 
 
@@ -212,7 +212,7 @@ scheduler = getThread >>= runThread scheduler
 --       * after new threads have been added to a thread pool,
 --       * after new sparks have been added to the spark pool, and
 --       * once the delay after a NOWORK message has expired.
-getThread :: RTS (Thread RTS)
+getThread :: RTS Thread
 getThread = do
   schedID <- schedulerID
   maybe_thread <- liftThreadM stealThread
@@ -229,7 +229,7 @@ getThread = do
 -- whence action 'onTerm' is executed.
 -- NOTE: Any high priority threads arising during the execution of 'runThread'
 --       are executed immediately by a call to 'runHiThreads'.
-runThread :: RTS () -> Thread RTS -> RTS ()
+runThread :: RTS () -> Thread -> RTS ()
 runThread onTerm (Atom m) = do
   x <- m False  -- action 'm' executed in low priority context
   case x of
@@ -240,7 +240,7 @@ runThread onTerm (Atom m) = do
 
 -- Execute given high priority thread and given stack of such threads
 -- until they all block or terminate, whence action 'onTerm' is executed.
-runHiThreads :: RTS () -> [Thread RTS] -> Thread RTS -> RTS ()
+runHiThreads :: RTS () -> [Thread] -> Thread -> RTS ()
 runHiThreads onTerm stack (Atom m) = do
   x <- m True   -- action 'm' executed in high priority context
   case x of
@@ -256,7 +256,7 @@ runHiThreads onTerm stack (Atom m) = do
 -- Send a 'spark' via PUSH message to the given 'target' unless 'target'
 -- is the current node (in which case 'spark' is executed immediately
 -- as a high priority thread).
-sendPUSH :: Spark RTS -> Node -> RTS ()
+sendPUSH :: Spark -> Node -> RTS ()
 sendPUSH spark target = do
   here <- liftIO Comm.myNode
   if target == here
@@ -265,7 +265,7 @@ sendPUSH spark target = do
       execHiThread $ mkThread $ unClosure spark
     else do
       -- construct and send PUSH message
-      let msg = PUSH spark :: Msg RTS
+      let msg = PUSH spark :: Msg
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ (show msg_size)
       liftIO $ Comm.send target $ encodeLazy msg
@@ -273,13 +273,13 @@ sendPUSH spark target = do
 
 -- Handle a PUSH message by converting the spark into a high priority thread
 -- and executing it immediately.
-handlePUSH :: Msg RTS -> RTS ()
+handlePUSH :: Msg -> RTS ()
 handlePUSH (PUSH spark) = execHiThread $ mkThread $ unClosure spark
 handlePUSH _ = error "panic in handlePUSH: not a PUSH message"
 
 
 -- Handle a TERM message, depending on whether this node is root or not.
-handleTERM :: MVar () -> Int -> Msg RTS -> RTS Int
+handleTERM :: MVar () -> Int -> Msg -> RTS Int
 handleTERM term_barrier term_count msg@(TERM root) = do
   if term_count == 0
     then do -- non-root node: deflect TERM msg, lift term barrier, term handler
