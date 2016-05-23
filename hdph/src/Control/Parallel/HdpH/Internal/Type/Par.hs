@@ -25,7 +25,7 @@ import Control.Parallel.HdpH.Closure (Closure)
 -- 'm' abstracts a monad encapsulating the underlying state.
 -- newtype ParM m a = Par { unPar :: (a -> Thread m) -> Thread m }
 
-type ParM m a = Cont (Thread m) a
+type ParM a = Cont Thread a
 
 unPar :: Cont r a -> (a -> r) -> r
 unPar = runCont
@@ -34,15 +34,15 @@ unPar = runCont
 -- how to continue after executing the monadic action).
 -- Note that [2] uses different model, a "Trace" GADT reifying the monadic
 -- actions, which are then interpreted by the scheduler.
-newtype Thread m = Atom (Bool -> m (ThreadCont m))
+newtype Thread = Atom (Bool -> IO ThreadCont)
 
 -- A ThreadCont either tells the scheduler to continue (constructor ThreadCont)
 -- or to terminate the current thread (constructor ThreadDone).
 -- In either case, the ThreadCont additionally provides a (possibly empty) list
 -- of high priority threads, to be executed before any low priority threads.
-data ThreadCont m = ThreadCont ![Thread m] (Thread m)
-                  | ThreadDone ![Thread m]
+data ThreadCont = ThreadCont ![Thread] Thread
+                | ThreadDone ![Thread]
 
 
 -- A spark is a 'Par' comp returning '()', wrapped into an explicit closure.
-type Spark m = Closure (ParM m ())
+type Spark = Closure (ParM ())
