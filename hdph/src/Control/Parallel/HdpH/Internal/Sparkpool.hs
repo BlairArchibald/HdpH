@@ -39,7 +39,9 @@ module Control.Parallel.HdpH.Internal.Sparkpool
     -- readMaxSparkCtr,   -- :: Dist -> SparkM Int
     -- readMaxSparkCtrs,  -- :: SparkM [Int]
     readSparkGenCtr,   -- :: SparkM Int
-    readSparkConvCtr   -- :: SparkM Int
+    readSparkConvCtr,   -- :: SparkM Int
+
+    getDistsIO -- getDistsIO :: IO [Dist]
   ) where
 
 import Prelude hiding (error)
