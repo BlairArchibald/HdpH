@@ -38,6 +38,7 @@ Library
                    Control.Parallel.HdpH.Internal.State.Comm,
                    Control.Parallel.HdpH.Internal.State.GRef,
                    Control.Parallel.HdpH.Internal.State.Location,
+                   Control.Parallel.HdpH.Internal.State.RTSState,
                    Control.Parallel.HdpH.Internal.Threadpool,
                    Control.Parallel.HdpH.Internal.Topology,
                    Control.Parallel.HdpH.Internal.Type.Comm,

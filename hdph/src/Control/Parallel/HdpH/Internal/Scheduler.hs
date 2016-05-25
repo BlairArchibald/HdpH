@@ -3,9 +3,9 @@
 -- Author: Patrick Maier
 -----------------------------------------------------------------------------
 
+
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- req'd for type 'RTS'
 {-# LANGUAGE ScopedTypeVariables #-}         -- req'd for type annotations
-{-# LANGUAGE RecordWildCards #-}
 
 module Control.Parallel.HdpH.Internal.Scheduler
   ( -- * abstract run-time system monad
@@ -36,15 +36,6 @@ import Control.Monad (unless, when, void)
 import qualified Data.ByteString.Lazy as BS
 import Data.Functor ((<$>))
 
--- For the state
-import Data.IORef (IORef, newIORef, writeIORef)
-import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (WorkQueueIO)
-import qualified Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue as WorkQueue (emptyIO)
-import Control.Parallel.HdpH.Internal.Data.DistMap (DistMap)
-import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap (new)
-import Control.Parallel.HdpH.Internal.Data.Sem (Sem)
-import Control.Parallel.HdpH.Internal.Data.Deque (DequeIO)
-import System.IO.Unsafe (unsafePerformIO)
 
 import Control.Parallel.HdpH.Closure (unClosure)
 import Control.Parallel.HdpH.Conf (RTSConf(scheds, wakeupDly))
@@ -68,8 +59,7 @@ import qualified Control.Parallel.HdpH.Internal.Threadpool as Threadpool
        (run, liftSparkM, liftIO)
 import Control.Parallel.HdpH.Internal.Type.Par
        (ParM, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
-
-
+import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState)
 
 -----------------------------------------------------------------------------
 -- RTS monad
@@ -119,7 +109,7 @@ run_ conf main = do
   -- fork wakeup server (periodically waking up racey sleeping scheds)
   wakeupServerTid <- forkIO $ Sem.signalPeriodically idleSem (wakeupDly conf)
 
-  initialiseState conf noWorkServer idleSem pools
+  initialiseRTSState conf noWorkServer idleSem pools
 
   -- start the RTS
   Comm.withCommDo conf $
@@ -173,55 +163,6 @@ run_ conf main = do
 
         -- kill schedulers
         liftIO $ mapM_ killThread schedulerTids
-
---TODO: Module for state
-data NewState =
-  NewState {
-      sConf       :: RTSConf                 -- config data
-    , sPools      :: DistMap (WorkQueueIO Spark) -- actual spark pools
-    , sSparkOrig  :: IORef (Maybe Node)      -- primary FISH target (recent src)
-    , sFishing    :: IORef Bool              -- True iff FISH outstanding
-    , sNoWork     :: ActionServer            -- for clearing "FISH outstndg" flag
-    , sIdleScheds :: Sem                     -- semaphore for idle schedulers
-    , sFishSent   :: IORef Int               -- #FISH sent
-    , sSparkRcvd  :: IORef Int               -- #sparks received
-    , sSparkGen   :: IORef Int               -- #sparks generated
-    , sSparkConv  :: IORef Int               -- #sparks converted
-    , sTpools     :: [(Int, DequeIO Thread)] -- list of actual thread pools,
-  }
-
--- Warning: Initially uninitialised
-rtsState :: IORef NewState
-{-# NOINLINE rtsState #-}
-rtsState = unsafePerformIO $ newIORef NewState{..}
-
-initialiseState :: RTSConf -> ActionServer -> Sem -> [(Int, DequeIO Thread)] -> IO ()
-initialiseState conf noW idleS tps = do
-  rs         <- getDistsIO
-  sparkPools <- DistMap.new <$> sequence [WorkQueue.emptyIO | _ <- rs]
-  sparkOrig  <- newIORef Nothing
-  fishing    <- newIORef False
-  -- TODO: Separate debugging state? Could hide via CPP for performance
-  fishSent   <- newIORef 0
-  sparkRcvd  <- newIORef 0
-  sparkGen   <- newIORef 0
-  sparkConv  <- newIORef 0
-
-  let state = NewState {
-      sConf       = conf
-    , sPools      = sparkPools
-    , sSparkOrig  = sparkOrig
-    , sFishing    = fishing
-    , sNoWork     = noW
-    , sIdleScheds = idleS
-    , sFishSent   = fishSent
-    , sSparkRcvd  = sparkRcvd
-    , sSparkGen   = sparkGen
-    , sSparkConv  = sparkConv
-    , sTpools     = tps
-  }
-
-  writeIORef rtsState state
 
 -- lifting lower layers
 liftThreadM :: ThreadM a -> RTS a
