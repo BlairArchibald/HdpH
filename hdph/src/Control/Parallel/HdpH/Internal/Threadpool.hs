@@ -31,6 +31,8 @@ import Control.Concurrent (ThreadId)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.Trans (lift)
 
+import Data.IORef (readIORef)
+
 import Control.Parallel.HdpH.Internal.Data.Deque
        (DequeIO, pushFrontIO, popFrontIO, popBackIO, maxLengthIO)
 import Control.Parallel.HdpH.Internal.Location (error)
@@ -39,6 +41,8 @@ import Control.Parallel.HdpH.Internal.Sparkpool (SparkM, wakeupSched)
 import qualified Control.Parallel.HdpH.Internal.Sparkpool as Sparkpool
        (liftIO)
 import Control.Parallel.HdpH.Internal.Type.Par (Thread)
+
+import Control.Parallel.HdpH.Internal.State.RTSState
 
 
 -----------------------------------------------------------------------------
@@ -99,9 +103,8 @@ poolID = do
 
 
 -- Read the max size of each thread pool.
-readMaxThreadCtrs :: ThreadM [Int]
-readMaxThreadCtrs = getPools >>= liftIO . mapM (maxLengthIO . snd)
-
+readMaxThreadCtrs :: IO [Int]
+readMaxThreadCtrs = readIORef rtsState >>= mapM (maxLengthIO . snd) . sTpools
 
 -- Steal a thread from any thread pool, with own pool as highest priority;
 -- threads from own pool are always taken from the front; threads from other

@@ -10,22 +10,19 @@
 module Control.Parallel.HdpH.Internal.Scheduler
   ( -- * abstract run-time system monad
     RTS,          -- instances: Monad, Functor
-    run_,         -- :: RTSConf -> RTS () -> IO ()
-    liftThreadM,  -- :: ThreadM RTS a -> RTS a
-    liftSparkM,   -- :: SparkM RTS a -> RTS a
-    liftIO,       -- :: IO a -> RTS a
-    forkStub,     -- :: RTS () -> RTS ThreadId
+    run_,         -- :: RTSConf -> IO () -> IO ()
+    forkStub,     -- :: IO () -> IO ThreadId
 
     -- * scheduler ID
-    schedulerID,  -- :: RTS Int
+    schedulerID,  -- :: IO Int
 
     -- * converting and executing threads
-    mkThread,     -- :: ParM RTS a -> Thread
-    execThread,   -- :: Thread -> RTS ()
-    execHiThread, -- :: Thread -> RTS ()
+    mkThread,     -- :: ParM IO a -> Thread
+    execThread,   -- :: Thread -> IO ()
+    execHiThread, -- :: Thread -> IO ()
 
     -- * pushing sparks
-    sendPUSH      -- :: Spark RTS -> Node -> RTS ()
+    sendPUSH      -- :: Spark IO -> Node -> IO ()
   ) where
 
 import Prelude hiding (error)
@@ -55,29 +52,20 @@ import Control.Parallel.HdpH.Internal.Sparkpool
 import qualified Control.Parallel.HdpH.Internal.Sparkpool as Sparkpool (run)
 import Control.Parallel.HdpH.Internal.Threadpool
        (ThreadM, poolID, forkThreadM, stealThread, readMaxThreadCtrs)
-import qualified Control.Parallel.HdpH.Internal.Threadpool as Threadpool
-       (run, liftSparkM, liftIO)
+import qualified Control.Parallel.HdpH.Internal.Threadpool as Threadpool (run)
 import Control.Parallel.HdpH.Internal.Type.Par
        (ParM, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
 import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState)
 
------------------------------------------------------------------------------
--- RTS monad
-
--- The RTS monad hides monad stack (IO, SparkM, ThreadM) as abstract.
-newtype RTS a = RTS { unRTS :: ThreadM a }
-                deriving (Functor, Monad, Applicative)
-
-
 -- Fork a new thread to execute the given 'RTS' action; the integer 'n'
 -- dictates how much to rotate the thread pools (so as to avoid contention
 -- due to concurrent access).
-forkRTS :: Int -> RTS () -> RTS ThreadId
-forkRTS n = liftThreadM . forkThreadM n . unRTS
+forkRTS :: Int -> IO () -> IO ThreadId
+forkRTS = forkThreadM
 
 -- Fork a stub to stand in for an external computing resource (eg. GAP).
 -- Will share thread pool with message handler.
-forkStub :: RTS () -> RTS ThreadId
+forkStub :: IO () -> IO ThreadId
 forkStub = forkRTS 0
 
 
@@ -111,74 +99,56 @@ run_ conf main = do
 
   initialiseRTSState conf noWorkServer idleSem pools
 
-  -- start the RTS
-  Comm.withCommDo conf $
-    Sparkpool.run conf noWorkServer idleSem $
-      Threadpool.run pools $
-        unRTS $
-          rts n noWorkServer wakeupServerTid
+  Comm.withCommDo conf $ rts n noWorkServer wakeupServerTid
 
-    where
-      -- RTS action
-      rts :: Int -> ActionServer -> ThreadId -> RTS ()
-      rts n_scheds noWorkServer wakeupServerTid = do
-        -- get some data from Comm module
-        all_nodes@(me:_) <- liftIO Comm.allNodes
-        is_root <- liftIO Comm.isRoot
+  -- RTS action
+  where rts :: Int -> ActionServer -> ThreadId -> IO ()
+        rts n_scheds noWorkServer wakeupServerTid = do
+          -- get some data from Comm module
+          all_nodes@(me:_) <- Comm.allNodes
+          is_root <- Comm.isRoot
 
-        -- create termination barrier
-        barrier <- liftIO newEmptyMVar
+          -- create termination barrier
+          barrier <- newEmptyMVar
 
-        -- fork message handler (accessing thread pool 0)
-        let n_nodes = if is_root then length all_nodes else 0
-        handlerTid <- forkRTS 0 (handler barrier n_nodes)
+          -- fork message handler (accessing thread pool 0)
+          let n_nodes = if is_root then length all_nodes else 0
+          handlerTid <- forkRTS 0 (handler barrier n_nodes)
 
-        -- fork schedulers (each accessing thread pool k, 1 <= k <= n_scheds)
-        schedulerTids <- mapM (\ k -> forkRTS k scheduler) [1 .. n_scheds]
+          -- fork schedulers (each accessing thread pool k, 1 <= k <= n_scheds)
+          schedulerTids <- mapM (\ k -> forkRTS k scheduler) [1 .. n_scheds]
 
-        -- run main RTS action
-        main
+          -- run main RTS action
+          main
 
-        -- termination
-        when is_root $ do
-          -- root: send TERM msg to all nodes to lift termination barrier
-          everywhere <- liftIO Comm.allNodes
-          let term_msg = encodeLazy (TERM me)
-          liftIO $ mapM_ (\ node -> Comm.send node term_msg) everywhere
+          -- termination
+          when is_root $ do
+            -- root: send TERM msg to all nodes to lift termination barrier
+            everywhere <-  Comm.allNodes
+            let term_msg = encodeLazy (TERM me)
+            mapM_ (\ node -> Comm.send node term_msg) everywhere
 
-        -- all nodes: block waiting for termination barrier
-        liftIO $ takeMVar barrier
+          -- all nodes: block waiting for termination barrier
+          takeMVar barrier
 
-        -- print stats
-        printFinalStats
+          -- print stats
+          printFinalStats
 
-        -- kill nowork server
-        liftIO $ killServer noWorkServer
+          -- kill nowork server
+          killServer noWorkServer
 
-        -- kill wakeup server
-        liftIO $ killThread wakeupServerTid
+          -- kill wakeup server
+          killThread wakeupServerTid
 
-        -- kill message handler
-        liftIO $ killThread handlerTid
+          -- kill message handler
+          killThread handlerTid
 
-        -- kill schedulers
-        liftIO $ mapM_ killThread schedulerTids
-
--- lifting lower layers
-liftThreadM :: ThreadM a -> RTS a
-liftThreadM = RTS
-
-liftSparkM :: SparkM a -> RTS a
-liftSparkM = liftThreadM . Threadpool.liftSparkM
-
-liftIO :: IO a -> RTS a
-liftIO = liftThreadM . Threadpool.liftIO
-
+          -- kill schedulers
+          mapM_ killThread schedulerTids
 
 -- Return scheduler ID, that is ID of scheduler's own thread pool.
-schedulerID :: RTS Int
-schedulerID = liftThreadM poolID
-
+schedulerID :: IO Int
+schedulerID = poolID
 
 -----------------------------------------------------------------------------
 -- cooperative scheduling
@@ -189,12 +159,12 @@ mkThread p = unPar p $ \ _c -> Atom (\ _ -> return $ ThreadDone [])
 
 
 -- Execute the given (low priority) thread until it blocks or terminates.
-execThread :: Thread -> RTS ()
+execThread :: Thread -> IO ()
 execThread = runThread (return ())
 
 -- Execute the given (high priority) thread until it and all its high
 -- priority descendents block or terminate.
-execHiThread :: Thread -> RTS ()
+execHiThread :: Thread -> IO ()
 execHiThread = runHiThreads (return ()) []
 
 
@@ -202,7 +172,7 @@ execHiThread = runHiThreads (return ()) []
 -- (with low priority) until it blocks or terminates, whence repeat forever;
 -- if there is no thread to execute then block the scheduler (ie. its
 -- underlying IO thread).
-scheduler :: RTS ()
+scheduler :: IO ()
 scheduler = getThread >>= runThread scheduler
 
 
@@ -214,24 +184,24 @@ scheduler = getThread >>= runThread scheduler
 --       * after new threads have been added to a thread pool,
 --       * after new sparks have been added to the spark pool, and
 --       * once the delay after a NOWORK message has expired.
-getThread :: RTS Thread
+getThread :: IO Thread
 getThread = do
   schedID <- schedulerID
-  maybe_thread <- liftThreadM stealThread
+  maybe_thread <- stealThread
   case maybe_thread of
     Just thread -> return thread
     Nothing     -> do
-      maybe_spark <- liftSparkM $ getLocalSpark schedID
+      maybe_spark <- getLocalSpark schedID
       case maybe_spark of
         Just spark -> return $ mkThread $ unClosure spark
-        Nothing    -> liftSparkM blockSched >> getThread
+        Nothing    -> blockSched >> getThread
 
 
 -- Execute given (low priority) thread until it blocks or terminates,
 -- whence action 'onTerm' is executed.
 -- NOTE: Any high priority threads arising during the execution of 'runThread'
 --       are executed immediately by a call to 'runHiThreads'.
-runThread :: RTS () -> Thread -> RTS ()
+runThread :: IO () -> Thread -> IO ()
 runThread onTerm (Atom m) = do
   x <- m False  -- action 'm' executed in low priority context
   case x of
@@ -242,7 +212,7 @@ runThread onTerm (Atom m) = do
 
 -- Execute given high priority thread and given stack of such threads
 -- until they all block or terminate, whence action 'onTerm' is executed.
-runHiThreads :: RTS () -> [Thread] -> Thread -> RTS ()
+runHiThreads :: IO () -> [Thread] -> Thread -> IO ()
 runHiThreads onTerm stack (Atom m) = do
   x <- m True   -- action 'm' executed in high priority context
   case x of
@@ -258,9 +228,9 @@ runHiThreads onTerm stack (Atom m) = do
 -- Send a 'spark' via PUSH message to the given 'target' unless 'target'
 -- is the current node (in which case 'spark' is executed immediately
 -- as a high priority thread).
-sendPUSH :: Spark -> Node -> RTS ()
+sendPUSH :: Spark -> Node -> IO ()
 sendPUSH spark target = do
-  here <- liftIO Comm.myNode
+  here <- Comm.myNode
   if target == here
     then do
       -- short cut PUSH msg locally
@@ -270,30 +240,30 @@ sendPUSH spark target = do
       let msg = PUSH spark :: Msg
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ (show msg_size)
-      liftIO $ Comm.send target $ encodeLazy msg
+      Comm.send target $ encodeLazy msg
 
 
 -- Handle a PUSH message by converting the spark into a high priority thread
 -- and executing it immediately.
-handlePUSH :: Msg -> RTS ()
+handlePUSH :: Msg -> IO ()
 handlePUSH (PUSH spark) = execHiThread $ mkThread $ unClosure spark
 handlePUSH _ = error "panic in handlePUSH: not a PUSH message"
 
 
 -- Handle a TERM message, depending on whether this node is root or not.
-handleTERM :: MVar () -> Int -> Msg -> RTS Int
+handleTERM :: MVar () -> Int -> Msg -> IO Int
 handleTERM term_barrier term_count msg@(TERM root) = do
   if term_count == 0
     then do -- non-root node: deflect TERM msg, lift term barrier, term handler
-            liftIO $ Comm.send root $ encodeLazy msg
-            void $ liftIO $ tryPutMVar term_barrier () 
+            Comm.send root $ encodeLazy msg
+            void $ tryPutMVar term_barrier ()
             return (-1)
     else -- root node
          if term_count > 1
            then do -- at least one TERM msg outstanding: decrement term count
                    return $! (term_count - 1)
            else do -- last TERM msg received: lift term barrier, term handler
-                   void $ liftIO $ tryPutMVar term_barrier ()
+                   void $ tryPutMVar term_barrier ()
                    return (-1)
 handleTERM _ _ _ = error "panic in handleTERM: not a TERM message"
 
@@ -305,35 +275,36 @@ handleTERM _ _ _ = error "panic in handleTERM: not a TERM message"
 -- Message handler, running continously (in its own thread) receiving
 -- and handling messages (some of which may unblock threads or create sparks)
 -- as they arrive. Message handler terminates on receiving TERM message(s).
-handler :: MVar () -> Int -> RTS ()
+handler :: MVar () -> Int -> IO ()
 handler term_barrier term_count =
   when (term_count >= 0) $ do
-    msg <- decodeLazy <$> liftIO Comm.receive
+    msg <- decodeLazy <$> Comm.receive
     debug dbgMsgRcvd $
       ">> " ++ show msg
     case msg of
       TERM _ -> handleTERM term_barrier term_count msg >>= handler term_barrier
       PUSH _ -> handlePUSH msg >> handler term_barrier term_count
-      _      -> liftSparkM (dispatch msg) >> handler term_barrier term_count
+      _      -> dispatch msg   >> handler term_barrier term_count
 
 
 -----------------------------------------------------------------------------
 -- auxiliary stuff
 
 -- Print stats (#sparks, threads, FISH, ...) at appropriate debug level.
--- TODO: Log time elapsed since RTS is up
-printFinalStats :: RTS ()
+-- TODO: Log time elapsed since IO is up
+printFinalStats :: IO ()
 printFinalStats = do
-  fishes       <- liftSparkM $ readFishSentCtr
-  schedules    <- liftSparkM $ readSparkRcvdCtr
-  sparks       <- liftSparkM $ readSparkGenCtr
+  -- TODO: Get this stats data from the state
+  fishes       <- readFishSentCtr
+  schedules    <- readSparkRcvdCtr
+  sparks       <- readSparkGenCtr
   -- max_sparks   <- liftSparkM $ readMaxSparkCtrs
-  maxs_threads <- liftThreadM $ readMaxThreadCtrs
+  maxs_threads <- readMaxThreadCtrs
   debug dbgStats $ "#SPARK=" ++ show sparks ++ "   " ++
                    --"max_SPARK=" ++ show max_sparks ++ "   " ++
                    "max_THREAD=" ++ show maxs_threads
   debug dbgStats $ "#FISH_sent=" ++ show fishes ++ "   " ++
                    "#SCHED_rcvd=" ++ show schedules
 
-debug :: Int -> String -> RTS ()
-debug level message = liftIO $ Location.debug level message
+debug :: Int -> String -> IO ()
+debug level message = Location.debug level message

@@ -30,18 +30,6 @@ module Control.Parallel.HdpH.Internal.Sparkpool
     handleFISH,      -- :: Msg -> SparkM ()
     handleSCHEDULE,  -- :: Msg -> SparkM ()
     handleNOWORK,    -- :: Msg -> SparkM ()
-
-    -- * access to stats data
-    readPoolSize,      -- :: Dist -> SparkM Int
-    readFishSentCtr,   -- :: SparkM Int
-    readSparkRcvdCtr,  -- :: SparkM Int
-    -- Currently unsupported by priority queue implementation
-    -- readMaxSparkCtr,   -- :: Dist -> SparkM Int
-    -- readMaxSparkCtrs,  -- :: SparkM [Int]
-    readSparkGenCtr,   -- :: SparkM Int
-    readSparkConvCtr,   -- :: SparkM Int
-
-    getDistsIO -- getDistsIO :: IO [Dist]
   ) where
 
 import Prelude hiding (error)
@@ -58,6 +46,9 @@ import Data.Ord (comparing)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
 import Data.Word (Word8)
+
+import Data.IORef (readIORef)
+
 import System.Random (randomRIO)
 
 import Control.Parallel.HdpH.Conf
@@ -87,8 +78,7 @@ import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
 import Control.Parallel.HdpH.Internal.Topology (dist)
 import Control.Parallel.HdpH.Internal.Misc (encodeLazy, ActionServer, reqAction)
 import Control.Parallel.HdpH.Internal.Type.Par (Spark)
-
-
+import Control.Parallel.HdpH.Internal.State.RTSState
 
 -----------------------------------------------------------------------------
 -- SparkM monad
@@ -140,113 +130,6 @@ run conf noWorkServer idleSem action = do
   -- run monad
   runReaderT action s0
 
-
--- Lifting lower layers.
-liftIO :: IO a -> SparkM a
-liftIO = lift
-
-
------------------------------------------------------------------------------
--- access to state
-
-getPool :: Dist -> SparkM (WorkQueueIO (Spark))
-getPool r = DistMap.lookup r . s_pools <$> ask
-
-readPoolSize :: Dist -> SparkM Int
-readPoolSize r = getPool r >>= liftIO . sizeIO
-
-getSparkOrigHist :: SparkM (IORef (Maybe Node))
-getSparkOrigHist = s_sparkOrig <$> ask
-
-readSparkOrigHist :: SparkM (Maybe Node)
-readSparkOrigHist = do
-  useLastSteal <- useLastStealOptimisation <$> s_conf <$> ask
-  if useLastSteal
-   then getSparkOrigHist >>= liftIO . readIORef
-   else return Nothing
-
-
-setSparkOrigHist :: Node -> SparkM ()
-setSparkOrigHist mostRecentOrigin = do
-  sparkOrigHistRef <- getSparkOrigHist
-  liftIO $ writeIORef sparkOrigHistRef (Just mostRecentOrigin)
-
-clearSparkOrigHist :: SparkM ()
-clearSparkOrigHist = do
-  sparkOrigHistRef <- getSparkOrigHist
-  liftIO $ writeIORef sparkOrigHistRef Nothing
-
-getFishingFlag :: SparkM (IORef Bool)
-getFishingFlag = s_fishing <$> ask
-
-getNoWorkServer :: SparkM ActionServer
-getNoWorkServer = s_noWork <$> ask
-
-getIdleSchedsSem :: SparkM Sem
-getIdleSchedsSem = s_idleScheds <$> ask
-
-getFishSentCtr :: SparkM (IORef Int)
-getFishSentCtr = s_fishSent <$> ask
-
-readFishSentCtr :: SparkM Int
-readFishSentCtr = getFishSentCtr >>= readCtr
-
-getSparkRcvdCtr :: SparkM (IORef Int)
-getSparkRcvdCtr = s_sparkRcvd <$> ask
-
-readSparkRcvdCtr :: SparkM Int
-readSparkRcvdCtr = getSparkRcvdCtr >>= readCtr
-
-getSparkGenCtr :: SparkM (IORef Int)
-getSparkGenCtr = s_sparkGen <$> ask
-
-readSparkGenCtr :: SparkM Int
-readSparkGenCtr = getSparkGenCtr >>= readCtr
-
-getSparkConvCtr :: SparkM (IORef Int)
-getSparkConvCtr = s_sparkConv <$> ask
-
-readSparkConvCtr :: SparkM Int
-readSparkConvCtr = getSparkConvCtr >>= readCtr
-
--- Currently Unsupported by the priority queue
-
--- readMaxSparkCtr :: Dist -> SparkM m Int
--- readMaxSparkCtr r = getPool r >>= liftIO . maxLengthIO
-
--- readMaxSparkCtrs :: SparkM m [Int]
--- readMaxSparkCtrs = liftIO getDistsIO >>= mapM readMaxSparkCtr
-
-getMaxHops :: SparkM Int
-getMaxHops = maxHops <$> s_conf <$> ask
-
-getMaxFish :: SparkM Int
-getMaxFish = maxFish <$> s_conf <$> ask
-
-getMinSched :: SparkM Int
-getMinSched = minSched <$> s_conf <$> ask
-
-getMinFishDly :: SparkM Int
-getMinFishDly = minFishDly <$> s_conf <$> ask
-
-getMaxFishDly :: SparkM Int
-getMaxFishDly = maxFishDly <$> s_conf <$> ask
-
-
------------------------------------------------------------------------------
--- access to Comm module state
-
-singleNode :: SparkM Bool
-singleNode = (< 2) <$> liftIO Comm.nodes
-
-getEquiDistBasesIO :: IO (DistMap [(Node, Int)])
-getEquiDistBasesIO = Comm.equiDistBases
-
-getDistsIO :: IO [Dist]
-getDistsIO = DistMap.keys <$> Comm.equiDistBases
-
-getMinDistIO :: IO Dist
-getMinDistIO = DistMap.minDist <$> Comm.equiDistBases
 
 
 -----------------------------------------------------------------------------
@@ -680,24 +563,6 @@ spineList []     = ()
 spineList (_:xs) = spineList xs
 
 
-readFlag :: IORef Bool -> SparkM Bool
-readFlag = liftIO . readIORef
-
--- Sets given 'flag'; returns True iff 'flag' did actually change.
-setFlag :: IORef Bool -> SparkM Bool
-setFlag flag = liftIO $ atomicModifyIORef flag $ \ v -> (True, not v)
-
--- Clears given 'flag'; returns True iff 'flag' did actually change.
-clearFlag :: IORef Bool -> SparkM Bool
-clearFlag flag = liftIO $ atomicModifyIORef flag $ \ v -> (False, v)
-
-
-readCtr :: IORef Int -> SparkM Int
-readCtr = liftIO . readIORef
-
-incCtr :: IORef Int -> SparkM ()
-incCtr ctr = liftIO $ atomicModifyIORef ctr $ \ v ->
-                        let v' = v + 1 in v' `seq` (v', ())
 
 
 -- Returns up to 'n' unique random elements from the given list of 'universes',
