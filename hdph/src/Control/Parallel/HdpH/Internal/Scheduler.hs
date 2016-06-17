@@ -38,7 +38,7 @@ import Control.Parallel.HdpH.Closure (unClosure)
 import Control.Parallel.HdpH.Conf (RTSConf(scheds, wakeupDly))
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm
        (myNode, allNodes, isRoot, send, receive, withCommDo)
-import qualified Control.Parallel.HdpH.Internal.Data.Deque as Deque (emptyIO)
+import qualified Control.Parallel.HdpH.Internal.Data.Deque as Deque (emptyIO, DequeIO)
 import qualified Control.Parallel.HdpH.Internal.Data.Sem as Sem
        (new, signalPeriodically)
 import Control.Parallel.HdpH.Internal.Location
@@ -47,15 +47,12 @@ import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
 import Control.Parallel.HdpH.Internal.Misc
        (encodeLazy, decodeLazy, ActionServer, newServer, killServer)
 import Control.Parallel.HdpH.Internal.Sparkpool
-       (SparkM, blockSched, getLocalSpark, Msg(TERM,PUSH), dispatch,
-        readFishSentCtr, readSparkRcvdCtr, readSparkGenCtr, getDistsIO)
-import qualified Control.Parallel.HdpH.Internal.Sparkpool as Sparkpool (run)
+       (blockSched, getLocalSpark, Msg(TERM,PUSH), dispatch)
 import Control.Parallel.HdpH.Internal.Threadpool
-       (ThreadM, poolID, forkThreadM, stealThread, readMaxThreadCtrs)
-import qualified Control.Parallel.HdpH.Internal.Threadpool as Threadpool (run)
+       (poolID, forkThreadM, stealThread, readMaxThreadCtrs)
 import Control.Parallel.HdpH.Internal.Type.Par
        (ParM, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
-import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState)
+import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState, readSparkGenCtr, readSparkRcvdCtr, readFishSentCtr)
 
 -- Fork a new thread to execute the given 'RTS' action; the integer 'n'
 -- dictates how much to rotate the thread pools (so as to avoid contention
@@ -184,7 +181,7 @@ scheduler = getThread >>= runThread scheduler
 --       * after new threads have been added to a thread pool,
 --       * after new sparks have been added to the spark pool, and
 --       * once the delay after a NOWORK message has expired.
-getThread :: Pools -> IO Thread
+getThread :: [(Int, Deque.DequeIO Thread)]-> IO Thread
 getThread = do
   schedID <- schedulerID
   maybe_thread <- stealThread
