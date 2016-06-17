@@ -184,7 +184,7 @@ scheduler = getThread >>= runThread scheduler
 --       * after new threads have been added to a thread pool,
 --       * after new sparks have been added to the spark pool, and
 --       * once the delay after a NOWORK message has expired.
-getThread :: IO Thread
+getThread :: Pools -> IO Thread
 getThread = do
   schedID <- schedulerID
   maybe_thread <- stealThread
