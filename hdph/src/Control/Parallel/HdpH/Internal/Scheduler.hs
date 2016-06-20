@@ -54,16 +54,10 @@ import Control.Parallel.HdpH.Internal.Type.Par
        (ParM, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
 import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState, readSparkGenCtr, readSparkRcvdCtr, readFishSentCtr)
 
--- Fork a new thread to execute the given 'RTS' action; the integer 'n'
--- dictates how much to rotate the thread pools (so as to avoid contention
--- due to concurrent access).
-forkRTS :: Int -> IO () -> IO ThreadId
-forkRTS = forkThreadM
-
 -- Fork a stub to stand in for an external computing resource (eg. GAP).
 -- Will share thread pool with message handler.
-forkStub :: IO () -> IO ThreadId
-forkStub = forkRTS 0
+forkStub :: [(Int, Deque.DequeIO Thread)] -> ([(Int, Deque.DequeIO Thread)] -> IO ()) -> IO ThreadId
+forkStub ps a = forkThreadM ps 0 a
 
 
 -- Eliminate the whole RTS monad stack down the IO monad by running the given
@@ -96,11 +90,11 @@ run_ conf main = do
 
   initialiseRTSState conf noWorkServer idleSem pools
 
-  Comm.withCommDo conf $ rts n noWorkServer wakeupServerTid
+  Comm.withCommDo conf $ rts n pools noWorkServer wakeupServerTid
 
   -- RTS action
-  where rts :: Int -> ActionServer -> ThreadId -> IO ()
-        rts n_scheds noWorkServer wakeupServerTid = do
+  where rts :: Int -> [(Int, Deque.DequeIO Thread)] -> ActionServer -> ThreadId -> IO ()
+        rts n_scheds pools noWorkServer wakeupServerTid = do
           -- get some data from Comm module
           all_nodes@(me:_) <- Comm.allNodes
           is_root <- Comm.isRoot
@@ -110,10 +104,10 @@ run_ conf main = do
 
           -- fork message handler (accessing thread pool 0)
           let n_nodes = if is_root then length all_nodes else 0
-          handlerTid <- forkRTS 0 (handler barrier n_nodes)
+          handlerTid <- forkThreadM pools 0 (handler barrier n_nodes)
 
           -- fork schedulers (each accessing thread pool k, 1 <= k <= n_scheds)
-          schedulerTids <- mapM (\ k -> forkRTS k scheduler) [1 .. n_scheds]
+          schedulerTids <- mapM (\ k -> forkThreadM pools k scheduler) [1 .. n_scheds]
 
           -- run main RTS action
           main
@@ -144,7 +138,7 @@ run_ conf main = do
           mapM_ killThread schedulerTids
 
 -- Return scheduler ID, that is ID of scheduler's own thread pool.
-schedulerID :: IO Int
+schedulerID :: [(Int, Deque.DequeIO Thread)] -> IO Int
 schedulerID = poolID
 
 -----------------------------------------------------------------------------
@@ -169,8 +163,8 @@ execHiThread = runHiThreads (return ()) []
 -- (with low priority) until it blocks or terminates, whence repeat forever;
 -- if there is no thread to execute then block the scheduler (ie. its
 -- underlying IO thread).
-scheduler :: IO ()
-scheduler = getThread >>= runThread scheduler
+scheduler :: [(Int, Deque.DequeIO Thread)] -> IO ()
+scheduler pools = getThread pools >>= runThread (scheduler pools)
 
 
 -- Try to steal a thread from any thread pool (with own pool preferred);
@@ -182,16 +176,16 @@ scheduler = getThread >>= runThread scheduler
 --       * after new sparks have been added to the spark pool, and
 --       * once the delay after a NOWORK message has expired.
 getThread :: [(Int, Deque.DequeIO Thread)]-> IO Thread
-getThread = do
-  schedID <- schedulerID
-  maybe_thread <- stealThread
+getThread pools = do
+  schedID <- schedulerID pools
+  maybe_thread <- stealThread pools
   case maybe_thread of
     Just thread -> return thread
     Nothing     -> do
       maybe_spark <- getLocalSpark schedID
       case maybe_spark of
         Just spark -> return $ mkThread $ unClosure spark
-        Nothing    -> blockSched >> getThread
+        Nothing    -> blockSched >> getThread pools
 
 
 -- Execute given (low priority) thread until it blocks or terminates,
@@ -272,16 +266,16 @@ handleTERM _ _ _ = error "panic in handleTERM: not a TERM message"
 -- Message handler, running continously (in its own thread) receiving
 -- and handling messages (some of which may unblock threads or create sparks)
 -- as they arrive. Message handler terminates on receiving TERM message(s).
-handler :: MVar () -> Int -> IO ()
-handler term_barrier term_count =
+handler :: MVar () -> Int -> [(Int, Deque.DequeIO Thread)] -> IO ()
+handler term_barrier term_count ps =
   when (term_count >= 0) $ do
     msg <- decodeLazy <$> Comm.receive
     debug dbgMsgRcvd $
       ">> " ++ show msg
     case msg of
-      TERM _ -> handleTERM term_barrier term_count msg >>= handler term_barrier
-      PUSH _ -> handlePUSH msg >> handler term_barrier term_count
-      _      -> dispatch msg   >> handler term_barrier term_count
+      TERM _ -> handleTERM term_barrier term_count msg >>= \tc -> handler term_barrier tc ps
+      PUSH _ -> handlePUSH msg >> handler term_barrier term_count ps
+      _      -> dispatch msg   >> handler term_barrier term_count ps
 
 
 -----------------------------------------------------------------------------
