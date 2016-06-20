@@ -9,7 +9,6 @@
 
 module Control.Parallel.HdpH.Internal.Scheduler
   ( -- * abstract run-time system monad
-    RTS,          -- instances: Monad, Functor
     run_,         -- :: RTSConf -> IO () -> IO ()
     forkStub,     -- :: IO () -> IO ThreadId
 
