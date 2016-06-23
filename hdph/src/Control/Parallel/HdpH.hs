@@ -210,7 +210,7 @@ isMainRTS = Comm.isRoot
 -- by plugging in 'RTS', the state monad of the runtime system.
 -- Since neither 'ParM' nor 'RTS' are exported, 'Par' can be considered
 -- abstract.
-type Par a = ParM IO a
+type Par a = ParM a
 -- A newtype would be nicer than a type synonym but the resulting
 -- wrapping and unwrapping destroys readability (if it is at all possible,
 -- eg. inside Closures).

@@ -7,6 +7,7 @@ module Control.Parallel.HdpH.Internal.Type.Par
   ( -- * Par monad, threads and sparks
     ParM(..),
     unPar,
+    runPar,
     Thread(..),
     ThreadCont(..),
     Spark       -- synonym: Spark m = Closure (ParM m ())

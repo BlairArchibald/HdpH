@@ -50,7 +50,7 @@ import Control.Parallel.HdpH.Internal.Sparkpool
 import Control.Parallel.HdpH.Internal.Threadpool
        (poolID, forkThreadM, stealThread, readMaxThreadCtrs)
 import Control.Parallel.HdpH.Internal.Type.Par
-       (ParM, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
+       (ParM, runPar, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
 import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState, readSparkGenCtr, readSparkRcvdCtr, readFishSentCtr)
 
 -- Fork a stub to stand in for an external computing resource (eg. GAP).
@@ -144,9 +144,8 @@ schedulerID = poolID
 -- cooperative scheduling
 
 -- Converts 'Par' computations into threads (of whatever priority).
-mkThread :: ParM a -> Thread
-mkThread p = unPar p $ \ _c -> Atom (\ _ -> return $ ThreadDone [])
-
+mkThread :: [(Int, Deque.DequeIO Thread)] -> ParM a -> Thread
+mkThread tp p = runPar p tp $ \_ -> Atom (\ _ -> return $ ThreadDone [])
 
 -- Execute the given (low priority) thread until it blocks or terminates.
 execThread :: Thread -> IO ()
@@ -183,7 +182,7 @@ getThread pools = do
     Nothing     -> do
       maybe_spark <- getLocalSpark schedID
       case maybe_spark of
-        Just spark -> return $ mkThread $ unClosure spark
+        Just spark -> return $ mkThread pools $ unClosure spark
         Nothing    -> blockSched >> getThread pools
 
 
@@ -218,13 +217,13 @@ runHiThreads onTerm stack (Atom m) = do
 -- Send a 'spark' via PUSH message to the given 'target' unless 'target'
 -- is the current node (in which case 'spark' is executed immediately
 -- as a high priority thread).
-sendPUSH :: Spark -> Node -> IO ()
-sendPUSH spark target = do
+sendPUSH :: [(Int, Deque.DequeIO Thread)] -> Spark -> Node -> IO ()
+sendPUSH tp spark target = do
   here <- Comm.myNode
   if target == here
     then do
       -- short cut PUSH msg locally
-      execHiThread $ mkThread $ unClosure spark
+      execHiThread $ mkThread tp $ unClosure spark
     else do
       -- construct and send PUSH message
       let msg = PUSH spark :: Msg
@@ -235,9 +234,9 @@ sendPUSH spark target = do
 
 -- Handle a PUSH message by converting the spark into a high priority thread
 -- and executing it immediately.
-handlePUSH :: Msg -> IO ()
-handlePUSH (PUSH spark) = execHiThread $ mkThread $ unClosure spark
-handlePUSH _ = error "panic in handlePUSH: not a PUSH message"
+handlePUSH :: [(Int, Deque.DequeIO Thread)] -> Msg -> IO ()
+handlePUSH tp (PUSH spark) = execHiThread $ mkThread tp $ unClosure spark
+handlePUSH _ _ = error "panic in handlePUSH: not a PUSH message"
 
 
 -- Handle a TERM message, depending on whether this node is root or not.
@@ -273,7 +272,7 @@ handler term_barrier term_count ps =
       ">> " ++ show msg
     case msg of
       TERM _ -> handleTERM term_barrier term_count msg >>= \tc -> handler term_barrier tc ps
-      PUSH _ -> handlePUSH msg >> handler term_barrier term_count ps
+      PUSH _ -> handlePUSH ps msg >> handler term_barrier term_count ps
       _      -> dispatch msg   >> handler term_barrier term_count ps
 
 
