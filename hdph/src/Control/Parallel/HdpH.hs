@@ -13,7 +13,6 @@ module Control.Parallel.HdpH
 
     -- * Par monad
     -- $Par_monad
-    Par,       -- kind * -> *; instances: Functor, Monad
     runParIO_,    -- :: RTSConf -> Par () -> IO ()
     runParIO,     -- :: RTSConf -> Par a -> IO (Maybe a)
 
@@ -105,7 +104,7 @@ import Control.Parallel.HdpH.Internal.Sparkpool (putLocalSpark,
                                                  putLocalSparkWithPrio)
 import Control.Parallel.HdpH.Internal.Threadpool (putThread, putThreads)
 import Control.Parallel.HdpH.Internal.Type.Par
-       (ParM, Thread(Atom), ThreadCont(ThreadCont, ThreadDone))
+       (ParM, Par(MkPar), Thread(Atom), ThreadCont(ThreadCont, ThreadDone), runParT, unPar, ask)
 import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (Priority)
 import Control.Monad.Cont (cont)
 
@@ -196,26 +195,6 @@ runRTS_ = Scheduler.run_
 isMainRTS :: IO Bool
 isMainRTS = Comm.isRoot
 
-
------------------------------------------------------------------------------
--- $Par_monad
--- 'Par' is the monad for parallel computations in HdpH.
--- It is a continuation monad, similar to the one described in paper
--- /A monad for deterministic parallelism/
--- by S. Marlow, R. Newton, S. Peyton Jones (Haskell 2011).
-
--- | 'Par' is type constructor of kind @*->*@ and an instance of classes
--- 'Functor' and 'Monad'.
--- 'Par' is defined in terms of a parametric continuation monad 'ParM'
--- by plugging in 'RTS', the state monad of the runtime system.
--- Since neither 'ParM' nor 'RTS' are exported, 'Par' can be considered
--- abstract.
-type Par a = ParM a
--- A newtype would be nicer than a type synonym but the resulting
--- wrapping and unwrapping destroys readability (if it is at all possible,
--- eg. inside Closures).
-
-
 -----------------------------------------------------------------------------
 -- atomic Par actions (not to be exported)
 
@@ -227,24 +206,24 @@ type Par a = ParM a
 atom :: (Bool -> IO a) -> Par a
 {-# INLINE atom #-}
 atom m =
-  cont $ \ c -> Atom $ \ hi -> m hi >>= return . ThreadCont [] . c
+  MkPar $ \s c -> Atom $ \ hi -> m hi >>= return . ThreadCont [] . c
 
 -- lifting RTS action into the Par monad, potentially injecting some
 -- high priority threads; don't export
 atomMayInjectHi :: (Bool -> IO ([Thread], a)) -> Par a
 {-# INLINE atomMayInjectHi #-}
 atomMayInjectHi m =
-  cont $ \ c -> Atom $ \ hi -> m hi >>= \ (hts, x) ->
+  MkPar $ \s c -> Atom $ \ hi -> m hi >>= \ (hts, x) ->
                               return $ ThreadCont hts $ c x
 
--- lifting an IO action that may potentially stop into the Par monad;
+-- lifting an RTS action that may potentially stop into the Par monad;
 -- the action is expected to return Nothing if it did stop; note that
 -- the action itself is responsible for capturing the continuation c
 -- to continue later on (if it is suspended rather than terminating)
 atomMayStop :: ((a -> Thread) -> Bool -> IO (Maybe a)) -> Par a
 {-# INLINE atomMayStop #-}
 atomMayStop m =
-  cont $ \ c -> Atom $ \ hi -> m c hi >>=
+  MkPar $ \s c -> Atom $ \ hi -> m c hi >>=
                               maybe (return $ ThreadDone [])
                                     (return . ThreadCont [] . c)
 
@@ -399,7 +378,8 @@ fork = atom . const . putThread . mkThread
 -- be stolen by another node and executed there.
 spark :: Dist -> Closure (Par ()) -> Par ()
 {-# INLINE spark #-}
-spark r clo = atom $ const $ schedulerID >>= \ i -> putLocalSpark i r clo
+spark r clo = atom $ const $ schedulerID >>= \ i ->
+                             putLocalSpark i r clo
 
 -- | Creates a new spark with the given priority
 sparkWithPrio :: Dist -> Priority -> Closure (Par ()) -> Par ()

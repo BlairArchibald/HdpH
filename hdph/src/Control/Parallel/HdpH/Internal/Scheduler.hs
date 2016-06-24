@@ -50,7 +50,7 @@ import Control.Parallel.HdpH.Internal.Sparkpool
 import Control.Parallel.HdpH.Internal.Threadpool
        (poolID, forkThreadM, stealThread, readMaxThreadCtrs)
 import Control.Parallel.HdpH.Internal.Type.Par
-       (ParM, runPar, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
+       (ParM, runParT, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
 import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState, readSparkGenCtr, readSparkRcvdCtr, readFishSentCtr)
 
 -- Fork a stub to stand in for an external computing resource (eg. GAP).
@@ -145,7 +145,7 @@ schedulerID = poolID
 
 -- Converts 'Par' computations into threads (of whatever priority).
 mkThread :: [(Int, Deque.DequeIO Thread)] -> ParM a -> Thread
-mkThread tp p = runPar p tp $ \_ -> Atom (\ _ -> return $ ThreadDone [])
+mkThread tp p = runParT p tp $ \_ -> Atom (\ _ -> return $ ThreadDone [])
 
 -- Execute the given (low priority) thread until it blocks or terminates.
 execThread :: Thread -> IO ()

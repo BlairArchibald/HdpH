@@ -5,9 +5,11 @@
 
 module Control.Parallel.HdpH.Internal.Type.Par
   ( -- * Par monad, threads and sparks
-    ParM(..),
+    ParM(),
+    Par(MkPar),
     unPar,
-    runPar,
+    runParT,
+    ask,
     Thread(..),
     ThreadCont(..),
     Spark       -- synonym: Spark m = Closure (ParM m ())
@@ -28,24 +30,24 @@ import Control.Parallel.HdpH.Internal.Data.Deque (DequeIO)
 -- 'm' abstracts a monad encapsulating the underlying state.
 -- newtype ParM m a = Par { unPar :: (a -> Thread m) -> Thread m }
 
-newtype Par s r a = Par { unPar :: s -> (a -> r) -> r }
+newtype Par s r a = MkPar { unPar :: s -> (a -> r) -> r }
 
 instance Functor (Par s r) where
-  fmap f k = Par $ \s c -> unPar k s (c . f)
+  fmap f k = MkPar $ \s c -> unPar k s (c . f)
 
 instance Applicative (Par s r) where
   pure  = return
   (<*>) = ap
 
 instance Monad (Par s r) where
-  return a = Par $ \s c -> c a
-  f >>= k  = Par $ \s c -> unPar f s $ \a -> unPar (k a) s c
+  return a = MkPar $ \s c -> c a
+  f >>= k  = MkPar $ \s c -> unPar f s $ \a -> unPar (k a) s c
 
 ask :: Par s r s
-ask = Par $ \s c -> c s
+ask = MkPar $ \s c -> c s
 
-runPar :: Par s r a -> s -> (a -> r) -> r
-runPar k s f = unPar k s f
+runParT :: Par s r a -> s -> (a -> r) -> r
+runParT k s f = unPar k s f
 
 type ParM a = Par [(Int, DequeIO Thread)] Thread a
 
