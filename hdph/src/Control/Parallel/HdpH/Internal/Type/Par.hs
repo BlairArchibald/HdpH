@@ -5,10 +5,10 @@
 
 module Control.Parallel.HdpH.Internal.Type.Par
   ( -- * Par monad, threads and sparks
-    ParM(),
-    Par(MkPar),
+    Par,
+    mkPar,
     unPar,
-    runParT,
+    runPar,
     ask,
     Thread(..),
     ThreadCont(..),
@@ -30,26 +30,29 @@ import Control.Parallel.HdpH.Internal.Data.Deque (DequeIO)
 -- 'm' abstracts a monad encapsulating the underlying state.
 -- newtype ParM m a = Par { unPar :: (a -> Thread m) -> Thread m }
 
-newtype Par s r a = MkPar { unPar :: s -> (a -> r) -> r }
+newtype ContR s r a = ContR { unPar :: s -> (a -> r) -> r }
 
-instance Functor (Par s r) where
-  fmap f k = MkPar $ \s c -> unPar k s (c . f)
+instance Functor (ContR s r) where
+  fmap f k = ContR $ \s c -> unPar k s (c . f)
 
-instance Applicative (Par s r) where
+instance Applicative (ContR s r) where
   pure  = return
   (<*>) = ap
 
-instance Monad (Par s r) where
-  return a = MkPar $ \s c -> c a
-  f >>= k  = MkPar $ \s c -> unPar f s $ \a -> unPar (k a) s c
+instance Monad (ContR s r) where
+  return a = ContR $ \s c -> c a
+  f >>= k  = ContR $ \s c -> unPar f s $ \a -> unPar (k a) s c
 
-ask :: Par s r s
-ask = MkPar $ \s c -> c s
+type Par a = ContR [(Int, DequeIO Thread)] Thread a
 
-runParT :: Par s r a -> s -> (a -> r) -> r
-runParT k s f = unPar k s f
+ask :: ContR s r s
+ask = ContR $ \s c -> c s
 
-type ParM a = Par [(Int, DequeIO Thread)] Thread a
+runPar :: Par a -> [(Int, DequeIO Thread)] -> (a -> Thread) -> Thread
+runPar k tp f = unPar k tp f
+
+mkPar :: (s -> (a -> r) -> r) -> ContR s r a
+mkPar = ContR
 
 -- A thread is a monadic action returning a ThreadCont (telling the scheduler
 -- how to continue after executing the monadic action).
@@ -61,9 +64,9 @@ newtype Thread = Atom (Bool -> IO ThreadCont)
 -- or to terminate the current thread (constructor ThreadDone).
 -- In either case, the ThreadCont additionally provides a (possibly empty) list
 -- of high priority threads, to be executed before any low priority threads.
-data ThreadCont = ThreadCont ![Thread] Thread
+data ThreadCont = ThreadCont ![Thread] (Thread)
                 | ThreadDone ![Thread]
 
 
 -- A spark is a 'Par' comp returning '()', wrapped into an explicit closure.
-type Spark = Closure (ParM ())
+type Spark = Closure (Par ())
