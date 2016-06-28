@@ -50,7 +50,7 @@ import Control.Parallel.HdpH.Internal.Sparkpool
 import Control.Parallel.HdpH.Internal.Threadpool
        (poolID, forkThreadM, stealThread, readMaxThreadCtrs)
 import Control.Parallel.HdpH.Internal.Type.Par
-       (ParM, runParT, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
+       (Par, runPar, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
 import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState, readSparkGenCtr, readSparkRcvdCtr, readFishSentCtr)
 
 -- Fork a stub to stand in for an external computing resource (eg. GAP).
@@ -144,17 +144,17 @@ schedulerID = poolID
 -- cooperative scheduling
 
 -- Converts 'Par' computations into threads (of whatever priority).
-mkThread :: [(Int, Deque.DequeIO Thread)] -> ParM a -> Thread
-mkThread tp p = runParT p tp $ \_ -> Atom (\ _ -> return $ ThreadDone [])
+mkThread :: [(Int, Deque.DequeIO Thread)] -> Par a -> Thread
+mkThread tp p = runPar p tp $ \_ -> Atom (\_ -> return $ ThreadDone [])
 
 -- Execute the given (low priority) thread until it blocks or terminates.
 execThread :: Thread -> IO ()
-execThread = runThread (return ())
+execThread t = runThread (return ()) (t)
 
 -- Execute the given (high priority) thread until it and all its high
 -- priority descendents block or terminate.
 execHiThread :: Thread -> IO ()
-execHiThread = runHiThreads (return ()) []
+execHiThread t = runHiThreads (return ()) [] (t)
 
 
 -- Try to get a thread from a thread pool or the spark pool and execute it
@@ -162,8 +162,7 @@ execHiThread = runHiThreads (return ()) []
 -- if there is no thread to execute then block the scheduler (ie. its
 -- underlying IO thread).
 scheduler :: [(Int, Deque.DequeIO Thread)] -> IO ()
-scheduler pools = getThread pools >>= runThread (scheduler pools)
-
+scheduler pools = getThread pools >>= \t -> runThread (scheduler pools) t
 
 -- Try to steal a thread from any thread pool (with own pool preferred);
 -- if there is none, try to convert a spark from the spark pool;
@@ -182,7 +181,7 @@ getThread pools = do
     Nothing     -> do
       maybe_spark <- getLocalSpark schedID
       case maybe_spark of
-        Just spark -> return $ mkThread pools $ unClosure spark
+        Just spark -> return . mkThread pools $ unClosure spark
         Nothing    -> blockSched >> getThread pools
 
 
@@ -223,7 +222,7 @@ sendPUSH tp spark target = do
   if target == here
     then do
       -- short cut PUSH msg locally
-      execHiThread $ mkThread tp $ unClosure spark
+      execHiThread $ mkThread tp (unClosure spark)
     else do
       -- construct and send PUSH message
       let msg = PUSH spark :: Msg
@@ -235,7 +234,7 @@ sendPUSH tp spark target = do
 -- Handle a PUSH message by converting the spark into a high priority thread
 -- and executing it immediately.
 handlePUSH :: [(Int, Deque.DequeIO Thread)] -> Msg -> IO ()
-handlePUSH tp (PUSH spark) = execHiThread $ mkThread tp $ unClosure spark
+handlePUSH tp (PUSH spark) = execHiThread $ mkThread tp (unClosure spark)
 handlePUSH _ _ = error "panic in handlePUSH: not a PUSH message"
 
 
