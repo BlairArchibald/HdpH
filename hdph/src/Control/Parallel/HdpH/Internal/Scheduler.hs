@@ -144,8 +144,8 @@ schedulerID = poolID
 -- cooperative scheduling
 
 -- Converts 'Par' computations into threads (of whatever priority).
-mkThread :: [(Int, Deque.DequeIO Thread)] -> Par a -> Thread
-mkThread tp p = runPar p tp $ \_ -> Atom (\_ -> return $ ThreadDone [])
+mkThread :: [(Int, Deque.DequeIO Thread)] -> Par a -> IO Thread
+mkThread tp p = runPar p tp $ \_ -> return $ Atom (\_ -> return $ ThreadDone [])
 
 -- Execute the given (low priority) thread until it blocks or terminates.
 execThread :: Thread -> IO ()
@@ -181,7 +181,7 @@ getThread pools = do
     Nothing     -> do
       maybe_spark <- getLocalSpark schedID
       case maybe_spark of
-        Just spark -> return . mkThread pools $ unClosure spark
+        Just spark -> mkThread pools $ unClosure spark
         Nothing    -> blockSched >> getThread pools
 
 
@@ -222,7 +222,7 @@ sendPUSH tp spark target = do
   if target == here
     then do
       -- short cut PUSH msg locally
-      execHiThread $ mkThread tp (unClosure spark)
+      mkThread tp (unClosure spark) >>= execHiThread
     else do
       -- construct and send PUSH message
       let msg = PUSH spark :: Msg
@@ -234,7 +234,7 @@ sendPUSH tp spark target = do
 -- Handle a PUSH message by converting the spark into a high priority thread
 -- and executing it immediately.
 handlePUSH :: [(Int, Deque.DequeIO Thread)] -> Msg -> IO ()
-handlePUSH tp (PUSH spark) = execHiThread $ mkThread tp (unClosure spark)
+handlePUSH tp (PUSH spark) = mkThread tp (unClosure spark) >>= execHiThread
 handlePUSH _ _ = error "panic in handlePUSH: not a PUSH message"
 
 

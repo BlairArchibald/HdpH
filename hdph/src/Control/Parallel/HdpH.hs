@@ -104,7 +104,7 @@ import Control.Parallel.HdpH.Internal.Sparkpool (putLocalSpark,
                                                  putLocalSparkWithPrio)
 import Control.Parallel.HdpH.Internal.Threadpool (putThread, putThreads)
 import Control.Parallel.HdpH.Internal.Type.Par
-       (ParM, Par(MkPar), Thread(Atom), ThreadCont(ThreadCont, ThreadDone), runParT, unPar, ask)
+       (Par, mkPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), unPar, ask)
 import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (Priority)
 import Control.Monad.Cont (cont)
 
@@ -206,14 +206,14 @@ isMainRTS = Comm.isRoot
 atom :: (Bool -> IO a) -> Par a
 {-# INLINE atom #-}
 atom m =
-  MkPar $ \s c -> Atom $ \ hi -> m hi >>= return . ThreadCont [] . c
+  mkPar $ \s c -> Atom $ \ hi -> m hi >>= return . ThreadCont [] . c
 
 -- lifting RTS action into the Par monad, potentially injecting some
 -- high priority threads; don't export
 atomMayInjectHi :: (Bool -> IO ([Thread], a)) -> Par a
 {-# INLINE atomMayInjectHi #-}
 atomMayInjectHi m =
-  MkPar $ \s c -> Atom $ \ hi -> m hi >>= \ (hts, x) ->
+  mkPar $ \s c -> Atom $ \ hi -> m hi >>= \ (hts, x) ->
                               return $ ThreadCont hts $ c x
 
 -- lifting an RTS action that may potentially stop into the Par monad;
@@ -223,7 +223,7 @@ atomMayInjectHi m =
 atomMayStop :: ((a -> Thread) -> Bool -> IO (Maybe a)) -> Par a
 {-# INLINE atomMayStop #-}
 atomMayStop m =
-  MkPar $ \s c -> Atom $ \ hi -> m c hi >>=
+  mkPar $ \s c -> Atom $ \ hi -> m c hi >>=
                               maybe (return $ ThreadDone [])
                                     (return . ThreadCont [] . c)
 
@@ -235,17 +235,18 @@ atomMayStop m =
 -- into an 'RTS' action (to be executed as a low-priority thread on any
 -- one node of the distributed runtime system).
 runPar :: Par a -> IO a
-runPar p = do -- create an empty MVar expecting the result of action 'p'
-              res <- newEmptyMVar
+runPar p = undefined
+-- do -- create an empty MVar expecting the result of action 'p'
+--               res <- newEmptyMVar
 
-              -- fork 'p', combined with a write to above MVar;
-              -- note that the starter thread (ie the 'fork') runs outwith
-              -- any scheduler (and terminates quickly); the forked action
-              -- (ie. 'p >>= ...') runs in a scheduler, however.
-              execThread $ mkThread $ fork (p >>= io . putMVar res)
+--               -- fork 'p', combined with a write to above MVar;
+--               -- note that the starter thread (ie the 'fork') runs outwith
+--               -- any scheduler (and terminates quickly); the forked action
+--               -- (ie. 'p >>= ...') runs in a scheduler, however.
+--               execThread $ mkThread $ fork (p >>= putMVar res)
 
-              -- block waiting for result
-              takeMVar res
+--               -- block waiting for result
+--               takeMVar res
 
 
 -- | Eliminates the 'Par' monad by executing the given parallel computation 'p',
@@ -287,16 +288,28 @@ done :: Par a
 done = atomMayStop $ const $ const $ return Nothing
 
 -- | Yield low priority current thread (ie. put it back in the spark pool).
--- WARNING: Will not work well because it puts the thread back into the pool
---          and then immediately schedules the same thread again. To make it
+-- warning: will not work well because it puts the thread back into the pool
+--          and then immediately schedules the same thread again. to make it
 --          work, should put thread into threadpool of scheduler 0, or at the
 --          back of own threadpool.
 yield :: Par ()
-{-# INLINE yield #-}
+{-# inline yield #-}
 yield = atomMayStop $ \ c hi -> if hi
                                   then return $ Just ()
-                                  else do putThread $ c ()
+                                  else do ask >>= \tp -> putThread tp $ c ()
                                           return Nothing
+
+      -- /home/blair/projects/HdpH/hdph/src/Control/Parallel/HdpH.hs:299:43:
+      --   Couldn't match type ‘Control.Parallel.HdpH.Internal.Type.Par.ContR
+      --                          Control.Parallel.HdpH.Internal.Threadpool.Pools r0’
+      --                  with ‘IO’
+      --   Expected type: IO Control.Parallel.HdpH.Internal.Threadpool.Pools
+      --     Actual type: Control.Parallel.HdpH.Internal.Type.Par.ContR
+      --                    Control.Parallel.HdpH.Internal.Threadpool.Pools
+      --                    r0
+      --                    Control.Parallel.HdpH.Internal.Threadpool.Pools
+      --   In the first argument of ‘(>>=)’, namely ‘ask’
+      --   In a stmt of a 'do' block: ask >>= \ tp -> putThread tp $ c ()
 
 -- | Times a Par action.
 time :: Par a -> Par (a, NominalDiffTime)

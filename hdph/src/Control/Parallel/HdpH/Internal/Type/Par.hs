@@ -43,12 +43,19 @@ instance Monad (ContR s r) where
   return a = ContR $ \s c -> c a
   f >>= k  = ContR $ \s c -> unPar f s $ \a -> unPar (k a) s c
 
-type Par a = ContR [(Int, DequeIO Thread)] Thread a
-
 ask :: ContR s r s
 ask = ContR $ \s c -> c s
 
-runPar :: Par a -> [(Int, DequeIO Thread)] -> (a -> Thread) -> Thread
+type Par a = ContR [(Int, DequeIO Thread)] (IO Thread) a
+
+io :: IO a -> Par a
+io x = ContR $ \s c -> join (fmap c x)
+
+-- return action :: Par (IO a)
+
+-- I guess we need to get a Par IO a somehow and then run inside it?
+
+runPar :: Par a -> [(Int, DequeIO Thread)] -> (a -> IO Thread) -> IO Thread
 runPar k tp f = unPar k tp f
 
 mkPar :: (s -> (a -> r) -> r) -> ContR s r a
