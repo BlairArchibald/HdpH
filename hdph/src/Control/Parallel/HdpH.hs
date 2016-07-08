@@ -161,14 +161,14 @@ dist (Node n1) (Node n2) = Topology.dist n1 n2
 -- | An IVar is a write-once one place buffer.
 -- IVars are abstract; they can be accessed and manipulated only by
 -- the operations 'put', 'get', 'tryGet', 'probe' and 'glob'.
-newtype IVar a = IVar (IVar.IVar (IO a))
+newtype IVar a = IVar (IVar.IVar a)
 
 
 -- | A GIVar (short for /global/ IVar) is a globally unique handle referring
 -- to an IVar.
 -- Unlike IVars, GIVars can be compared and serialised.
 -- They can also be written to remotely by the operation 'rput'.
-newtype GIVar a = GIVar (IVar.GIVar (IO a))
+newtype GIVar a = GIVar (IVar.GIVar a)
                   deriving (Eq, Ord, NFData, Serialize)
 
 -- Show instance (mainly for debugging)
@@ -203,10 +203,11 @@ isMainRTS = Comm.isRoot
 -- iff the action is executed by a high priority thread.
 
 -- lifting RTS action into the Par monad; don't export (usually)
+-- thread :: Bool -> IO ThreadCont
+-- ThreadCont :: Cont [Thread] [Thread] | Done?
 atom :: (Bool -> IO a) -> Par a
 {-# INLINE atom #-}
-atom m =
-  mkPar $ \s c -> Atom $ \ hi -> m hi >>= return . ThreadCont [] . c
+atom m = mkPar $ \s c -> Atom $ \hi -> m hi >>= \a -> return $ ThreadCont [] (c a)
 
 -- lifting RTS action into the Par monad, potentially injecting some
 -- high priority threads; don't export
@@ -292,12 +293,12 @@ done = atomMayStop $ const $ const $ return Nothing
 --          and then immediately schedules the same thread again. to make it
 --          work, should put thread into threadpool of scheduler 0, or at the
 --          back of own threadpool.
-yield :: Par ()
-{-# inline yield #-}
-yield = atomMayStop $ \ c hi -> if hi
-                                  then return $ Just ()
-                                  else do ask >>= \tp -> putThread tp $ c ()
-                                          return Nothing
+-- yield :: Par ()
+-- {-# inline yield #-}
+-- yield = atomMayStop $ \ c hi -> if hi
+--                                   then return $ Just ()
+--                                   else do ask >>= \tp -> putThread tp $ c ()
+--                                           return Nothing
 
       -- /home/blair/projects/HdpH/hdph/src/Control/Parallel/HdpH.hs:299:43:
       --   Couldn't match type ‘Control.Parallel.HdpH.Internal.Type.Par.ContR
@@ -319,12 +320,6 @@ time action = do
   t1 <- io getCurrentTime
   return (x, diffUTCTime t1 t0)
 
--- | Lifts an IO action into the Par monad.
--- WARNING: Scheduler will block if the IO action blocks!
-io :: IO a -> Par a
-{-# INLINE io #-}
-io = atom . const
-
 -- | Evaluates its argument to weak head normal form.
 eval :: a -> Par a
 {-# INLINE eval #-}
@@ -334,6 +329,10 @@ eval x = atom $ const $ x `seq` return x
 force :: (NFData a) => a -> Par a
 {-# INLINE force #-}
 force x = atom $ const $ x `deepseq` return x
+
+-- | Evaulate an IO action inside the par monad
+io :: IO a -> Par a
+io = undefined
 
 -- | Returns the node this operation is currently executed on.
 myNode :: Par Node
@@ -379,32 +378,30 @@ equiDist r = map (\ (p, n) -> (Node p, n)) . DistMap.lookup r <$>
 -- | Creates a new high-priority thread, to be executed immediately.
 forkHi :: Par () -> Par ()
 {-# INLINE forkHi #-}
-forkHi comp = atomMayInjectHi $ const $ return ([mkThread comp], ())
+forkHi comp = ask >>= \s -> atomMayInjectHi (\_ -> return ([mkThread s comp], ()))
 
 -- | Creates a new low-priority thread, to be executed on the current node.
 fork :: Par () -> Par ()
 {-# INLINE fork #-}
-fork = atom . const . putThread . mkThread
+fork cmp = ask >>= \s -> atom . const $ putThread s (mkThread s cmp)
 
 -- | Creates a spark, to be available for work stealing.
 -- The spark may be converted into a thread and executed locally, or it may
 -- be stolen by another node and executed there.
 spark :: Dist -> Closure (Par ()) -> Par ()
 {-# INLINE spark #-}
-spark r clo = atom $ const $ schedulerID >>= \ i ->
-                             putLocalSpark i r clo
+spark r clo = ask >>= \s -> atom $ const $ schedulerID s >>= \ i -> putLocalSpark i r clo
 
 -- | Creates a new spark with the given priority
 sparkWithPrio :: Dist -> Priority -> Closure (Par ()) -> Par ()
 {-# INLINE sparkWithPrio #-}
-sparkWithPrio r p clo = atom $ const $
-  schedulerID >>= \ i -> putLocalSparkWithPrio i r p clo
+sparkWithPrio r p clo = ask >>= \s -> atom $ const $ schedulerID s >>= \ i -> putLocalSparkWithPrio i r p clo
 
 -- | Pushes a computation to the given node, where it is eagerly converted
 -- into a thread and executed.
 pushTo :: Closure (Par ()) -> Node -> Par ()
 {-# INLINE pushTo #-}
-pushTo clo (Node n) = atom $ const $ sendPUSH clo n
+pushTo clo (Node n) = ask >>= \s -> atom $ const $ sendPUSH s clo n
 
 -- | Included for compatibility with PLDI paper;
 --   Sparkpool should be redesigned to avoid use 'mkClosure' here
@@ -442,15 +439,14 @@ new = IVar <$> (atom $ const $ newIVar)
 -- | Writes to given IVar (without forcing the value written).
 put :: IVar a -> a -> Par ()
 {-# INLINE put #-}
-put (IVar v) a =
-  atomMayInjectHi $ const $ putIVar v a >>= \ (hts, lts) ->
-                            putThreads lts >>
-                            return (hts, ())
+put (IVar v) a = ask >>= \s ->
+  atomMayInjectHi . const $ putIVar v a >>= \(hts, lts) -> putThreads s lts >> return (hts, ())
 
 -- | Reads from given IVar; blocks if the IVar is empty.
 get :: IVar a -> Par a
 {-# INLINE get #-}
-get (IVar v) = atomMayStop $ \ c hi -> getIVar hi v c
+get (IVar v) = atomMayStop $ \c hi -> getIVar hi v c
+-- atomMayStop :: ((a -> Thread) -> Bool -> IO (Maybe a)) -> Par a
 
 -- | Reads from given IVar; does not block but returns 'Nothing' if IVar empty.
 tryGet :: IVar a -> Par (Maybe a)
@@ -466,8 +462,9 @@ probe (IVar v) = atom $ const $ probeIVar v
 -- this operation is restricted to IVars of 'Closure' type.
 glob :: IVar (Closure a) -> Par (GIVar (Closure a))
 {-# INLINE glob #-}
-glob (IVar v) =
-  GIVar <$> (atom $ const $ schedulerID >>= \ i -> globIVar i v)
+glob (IVar v) = do
+  s <- ask
+  GIVar <$> (atom $ const $ schedulerID s >>= \ i -> globIVar i v)
 
 -- | Writes to (possibly remote) IVar denoted by given global handle;
 -- this operation is restricted to write values of 'Closure' type.
@@ -478,11 +475,12 @@ rput gv clo = pushTo $(mkClosure [| rput_abs (gv, clo) |]) (at gv)
 -- write to locally hosted global IVar; don't export
 rput_abs :: (GIVar (Closure a), Closure a) -> Thunk (Par ())
 {-# INLINE rput_abs #-}
-rput_abs (GIVar gv, clo) =
-  Thunk $ atomMayInjectHi $ const $
-    schedulerID >>= \ i ->
+rput_abs (GIVar gv, clo) = Thunk $ do
+  s <- ask
+  atomMayInjectHi $ const $
+    schedulerID s >>= \ i ->
     putGIVar i gv clo >>= \ (hts, lts) ->
-    putThreads lts >>
+    putThreads s lts >>
     return (hts, ())
 
 tryRPut :: GIVar (Closure a) -> Closure a -> Par (IVar (Closure Bool))
@@ -492,11 +490,12 @@ tryRPut gv clo = spawnAt (at gv) $(mkClosure [| tryRPut_abs (gv, clo) |])
 -- write to locally hosted global IVar; don't export
 tryRPut_abs :: (GIVar (Closure a), Closure a) -> Thunk (Par (Closure Bool))
 {-# INLINE tryRPut_abs #-}
-tryRPut_abs (GIVar gv, clo) =
-  Thunk $ atomMayInjectHi $ const $
-        schedulerID >>= \ i ->
+tryRPut_abs (GIVar gv, clo) = Thunk $ do
+  s <- ask
+  atomMayInjectHi $ const $
+        schedulerID s >>= \ i ->
         tryPutGIVar i gv clo >>= \ (suc, hts, lts) ->
-        putThreads lts >>
+        putThreads s lts >>
         return (hts, toClosureBool suc)
 
 toClosureBool :: Bool -> Closure Bool
@@ -508,7 +507,7 @@ toClosureBool_abs b = Thunk b
 -- | Fork argument as stub to stand in for an external computing resource.
 stub :: Par () -> Par ()
 {-# INLINE stub #-}
-stub = atom . const . void . forkStub . execThread . mkThread
+stub comp = ask >>= \s -> atom . const . void $ forkStub s . const $ execThread (mkThread s comp)
 
 
 -----------------------------------------------------------------------------

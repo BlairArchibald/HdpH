@@ -46,16 +46,9 @@ instance Monad (ContR s r) where
 ask :: ContR s r s
 ask = ContR $ \s c -> c s
 
-type Par a = ContR [(Int, DequeIO Thread)] (IO Thread) a
+type Par a = ContR [(Int, DequeIO Thread)] Thread a
 
-io :: IO a -> Par a
-io x = ContR $ \s c -> join (fmap c x)
-
--- return action :: Par (IO a)
-
--- I guess we need to get a Par IO a somehow and then run inside it?
-
-runPar :: Par a -> [(Int, DequeIO Thread)] -> (a -> IO Thread) -> IO Thread
+runPar :: Par a -> [(Int, DequeIO Thread)] -> (a -> Thread) -> Thread
 runPar k tp f = unPar k tp f
 
 mkPar :: (s -> (a -> r) -> r) -> ContR s r a
@@ -73,7 +66,6 @@ newtype Thread = Atom (Bool -> IO ThreadCont)
 -- of high priority threads, to be executed before any low priority threads.
 data ThreadCont = ThreadCont ![Thread] (Thread)
                 | ThreadDone ![Thread]
-
 
 -- A spark is a 'Par' comp returning '()', wrapped into an explicit closure.
 type Spark = Closure (Par ())
