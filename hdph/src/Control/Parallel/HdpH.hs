@@ -12,6 +12,7 @@ module Control.Parallel.HdpH
   ( -- $Intro
 
     -- * Par monad
+    Par,
     -- $Par_monad
     runParIO_,    -- :: RTSConf -> Par () -> IO ()
     runParIO,     -- :: RTSConf -> Par a -> IO (Maybe a)
