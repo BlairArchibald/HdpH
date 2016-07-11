@@ -237,18 +237,21 @@ atomMayStop m =
 -- into an 'RTS' action (to be executed as a low-priority thread on any
 -- one node of the distributed runtime system).
 runPar :: Par a -> IO a
-runPar p = undefined
--- do -- create an empty MVar expecting the result of action 'p'
---               res <- newEmptyMVar
+runPar p = do -- create an empty MVar expecting the result of action 'p'
+              res <- newEmptyMVar
 
---               -- fork 'p', combined with a write to above MVar;
---               -- note that the starter thread (ie the 'fork') runs outwith
---               -- any scheduler (and terminates quickly); the forked action
---               -- (ie. 'p >>= ...') runs in a scheduler, however.
---               execThread $ mkThread $ fork (p >>= putMVar res)
+              -- fork 'p', combined with a write to above MVar;
+              -- note that the starter thread (ie the 'fork') runs outwith
+              -- any scheduler (and terminates quickly); the forked action
+              -- (ie. 'p >>= ...') runs in a scheduler, however.
 
---               -- block waiting for result
---               takeMVar res
+              -- Since we run 'outside' a scheduler we need to pass a null
+              -- threadpool (undefined) to mkThread - does this work? Probably
+              -- not.
+              execThread $ mkThread undefined $ fork (p >>= io . putMVar res)
+
+              -- block waiting for result
+              takeMVar res
 
 
 -- | Eliminates the 'Par' monad by executing the given parallel computation 'p',
@@ -261,7 +264,8 @@ runPar p = undefined
 -- system du to the SPMD nature of HdpH.
 runParIO_ :: RTSConf -> Par () -> IO ()
 runParIO_ conf p =
-  runRTS_ conf $ do isMain <- isMainRTS
+  runRTS_ conf $ do putStrLn "In runParIO_"
+                    isMain <- isMainRTS
                     when isMain $ do
                       -- print Static table
                       Location.debug Location.dbgStaticTab $ unlines $
@@ -296,22 +300,10 @@ done = atomMayStop $ const $ const $ return Nothing
 --          back of own threadpool.
 -- yield :: Par ()
 -- {-# inline yield #-}
--- yield = atomMayStop $ \ c hi -> if hi
+
 --                                   then return $ Just ()
 --                                   else do ask >>= \tp -> putThread tp $ c ()
 --                                           return Nothing
-
-      -- /home/blair/projects/HdpH/hdph/src/Control/Parallel/HdpH.hs:299:43:
-      --   Couldn't match type ‘Control.Parallel.HdpH.Internal.Type.Par.ContR
-      --                          Control.Parallel.HdpH.Internal.Threadpool.Pools r0’
-      --                  with ‘IO’
-      --   Expected type: IO Control.Parallel.HdpH.Internal.Threadpool.Pools
-      --     Actual type: Control.Parallel.HdpH.Internal.Type.Par.ContR
-      --                    Control.Parallel.HdpH.Internal.Threadpool.Pools
-      --                    r0
-      --                    Control.Parallel.HdpH.Internal.Threadpool.Pools
-      --   In the first argument of ‘(>>=)’, namely ‘ask’
-      --   In a stmt of a 'do' block: ask >>= \ tp -> putThread tp $ c ()
 
 -- | Times a Par action.
 time :: Par a -> Par (a, NominalDiffTime)
@@ -333,7 +325,7 @@ force x = atom $ const $ x `deepseq` return x
 
 -- | Evaulate an IO action inside the par monad
 io :: IO a -> Par a
-io = undefined
+io i = atom (\_ -> i)
 
 -- | Returns the node this operation is currently executed on.
 myNode :: Par Node

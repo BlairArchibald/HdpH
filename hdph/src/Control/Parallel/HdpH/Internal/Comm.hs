@@ -163,6 +163,7 @@ debugLevel = debugLvl <$> conf
 withCommDo :: RTSConf -> IO () -> IO ()
 withCommDo conf0 action = do
   -- check debug level
+  putStrLn "In withCommDo"
   let debug_level = debugLvl conf0
   unless (debug_level >= dbgNone) $
     error $ thisModule ++ ".withCommDo: debug level < none"

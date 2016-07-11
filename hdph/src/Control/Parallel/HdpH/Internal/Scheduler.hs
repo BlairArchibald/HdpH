@@ -71,29 +71,29 @@ forkStub ps a = forkThreadM ps 0 a
 --       package.
 run_ :: RTSConf -> IO () -> IO ()
 run_ conf main = do
+  putStrLn "In Scheduler_run"
   let n = scheds conf
   unless (n > 0) $
     error "HdpH.Internal.Scheduler.run_: no schedulers"
 
-  -- allocate n+1 empty thread pools (numbered from 0 to n)
-  pools <- mapM (\ k -> do { pool <- Deque.emptyIO; return (k,pool) }) [0 .. n]
-
-  -- fork nowork server (for clearing the "FISH outstanding" flag on NOWORK)
-  noWorkServer <- newServer
-
-  -- create semaphore for idle schedulers
-  idleSem <- Sem.new
-
-  -- fork wakeup server (periodically waking up racey sleeping scheds)
-  wakeupServerTid <- forkIO $ Sem.signalPeriodically idleSem (wakeupDly conf)
-
-  initialiseRTSState conf noWorkServer idleSem pools
-
-  Comm.withCommDo conf $ rts n pools noWorkServer wakeupServerTid
+  Comm.withCommDo conf $ rts n
 
   -- RTS action
-  where rts :: Int -> [(Int, Deque.DequeIO Thread)] -> ActionServer -> ThreadId -> IO ()
-        rts n_scheds pools noWorkServer wakeupServerTid = do
+  where rts :: Int -> IO ()
+        rts n_scheds = do
+          -- create semaphore for idle schedulers
+          idleSem <- Sem.new
+
+          -- fork wakeup server (periodically waking up racey sleeping scheds)
+          wakeupServerTid <- forkIO $ Sem.signalPeriodically idleSem (wakeupDly conf)
+
+          -- allocate n+1 empty thread pools (numbered from 0 to n)
+          pools <- mapM (\ k -> do { pool <- Deque.emptyIO; return (k,pool) }) [0 .. n_scheds]
+
+          -- fork nowork server (for clearing the "FISH outstanding" flag on NOWORK)
+          noWorkServer <- newServer
+
+          initialiseRTSState conf noWorkServer idleSem pools
           -- get some data from Comm module
           all_nodes@(me:_) <- Comm.allNodes
           is_root <- Comm.isRoot
