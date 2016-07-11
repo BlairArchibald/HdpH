@@ -71,7 +71,6 @@ forkStub ps a = forkThreadM ps 0 a
 --       package.
 run_ :: RTSConf -> IO () -> IO ()
 run_ conf main = do
-  putStrLn "In Scheduler_run"
   let n = scheds conf
   unless (n > 0) $
     error "HdpH.Internal.Scheduler.run_: no schedulers"

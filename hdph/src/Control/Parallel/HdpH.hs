@@ -107,6 +107,7 @@ import Control.Parallel.HdpH.Internal.Threadpool (putThread, putThreads)
 import Control.Parallel.HdpH.Internal.Type.Par
        (Par, mkPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), unPar, ask)
 import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (Priority)
+import Control.Parallel.HdpH.Internal.State.RTSState (rtsState, RTSState(sTpools))
 import Control.Monad.Cont (cont)
 
 -----------------------------------------------------------------------------
@@ -245,10 +246,9 @@ runPar p = do -- create an empty MVar expecting the result of action 'p'
               -- any scheduler (and terminates quickly); the forked action
               -- (ie. 'p >>= ...') runs in a scheduler, however.
 
-              -- Since we run 'outside' a scheduler we need to pass a null
-              -- threadpool (undefined) to mkThread - does this work? Probably
-              -- not.
-              execThread $ mkThread undefined $ fork (p >>= io . putMVar res)
+              -- Get the threadpools from the state?
+              tps <- sTpools <$> readIORef rtsState
+              execThread $ mkThread tps $ fork (p >>= io . putMVar res)
 
               -- block waiting for result
               takeMVar res
@@ -264,8 +264,7 @@ runPar p = do -- create an empty MVar expecting the result of action 'p'
 -- system du to the SPMD nature of HdpH.
 runParIO_ :: RTSConf -> Par () -> IO ()
 runParIO_ conf p =
-  runRTS_ conf $ do putStrLn "In runParIO_"
-                    isMain <- isMainRTS
+  runRTS_ conf $ do isMain <- isMainRTS
                     when isMain $ do
                       -- print Static table
                       Location.debug Location.dbgStaticTab $ unlines $
