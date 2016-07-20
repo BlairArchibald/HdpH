@@ -50,12 +50,12 @@ import Control.Parallel.HdpH.Internal.Sparkpool
 import Control.Parallel.HdpH.Internal.Threadpool
        (poolID, forkThreadM, stealThread, readMaxThreadCtrs)
 import Control.Parallel.HdpH.Internal.Type.Par
-       (Par, runPar, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
+       (Par, runPar, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark, ThreadPools)
 import Control.Parallel.HdpH.Internal.State.RTSState (RTSState, initialiseRTSState, rtsState, readSparkGenCtr, readSparkRcvdCtr, readFishSentCtr)
 
 -- Fork a stub to stand in for an external computing resource (eg. GAP).
 -- Will share thread pool with message handler.
-forkStub :: [(Int, Deque.DequeIO Thread)] -> ([(Int, Deque.DequeIO Thread)] -> IO ()) -> IO ThreadId
+forkStub :: ThreadPools -> (ThreadPools -> IO ()) -> IO ThreadId
 forkStub ps a = forkThreadM ps 0 a
 
 
@@ -136,14 +136,14 @@ run_ conf main = do
           mapM_ killThread schedulerTids
 
 -- Return scheduler ID, that is ID of scheduler's own thread pool.
-schedulerID :: [(Int, Deque.DequeIO Thread)] -> IO Int
+schedulerID :: ThreadPools -> IO Int
 schedulerID = poolID
 
 -----------------------------------------------------------------------------
 -- cooperative scheduling
 
 -- Converts 'Par' computations into threads (of whatever priority).
-mkThread :: [(Int, Deque.DequeIO Thread)] -> Par a -> Thread
+mkThread :: ThreadPools -> Par a -> Thread
 mkThread tp p = runPar p tp $ \_ -> Atom (\_ -> return $ ThreadDone [])
 
 -- Execute the given (low priority) thread until it blocks or terminates.
@@ -160,7 +160,7 @@ execHiThread t = runHiThreads (return ()) [] t
 -- (with low priority) until it blocks or terminates, whence repeat forever;
 -- if there is no thread to execute then block the scheduler (ie. its
 -- underlying IO thread).
-scheduler :: [(Int, Deque.DequeIO Thread)] -> IO ()
+scheduler :: ThreadPools -> IO ()
 scheduler pools = runThread (scheduler pools) =<< getThread pools
 
 -- Try to steal a thread from any thread pool (with own pool preferred);
@@ -171,7 +171,7 @@ scheduler pools = runThread (scheduler pools) =<< getThread pools
 --       * after new threads have been added to a thread pool,
 --       * after new sparks have been added to the spark pool, and
 --       * once the delay after a NOWORK message has expired.
-getThread :: [(Int, Deque.DequeIO Thread)]-> IO Thread
+getThread :: ThreadPools-> IO Thread
 getThread pools = do
   schedID <- schedulerID pools
   maybe_thread <- stealThread pools
@@ -215,7 +215,7 @@ runHiThreads onTerm stack (Atom m) = do
 -- Send a 'spark' via PUSH message to the given 'target' unless 'target'
 -- is the current node (in which case 'spark' is executed immediately
 -- as a high priority thread).
-sendPUSH :: [(Int, Deque.DequeIO Thread)] -> Spark -> Node -> IO ()
+sendPUSH :: ThreadPools -> Spark -> Node -> IO ()
 sendPUSH tp spark target = do
   here <- Comm.myNode
   if target == here
@@ -232,7 +232,7 @@ sendPUSH tp spark target = do
 
 -- Handle a PUSH message by converting the spark into a high priority thread
 -- and executing it immediately.
-handlePUSH :: [(Int, Deque.DequeIO Thread)] -> Msg -> IO ()
+handlePUSH :: ThreadPools -> Msg -> IO ()
 handlePUSH tp (PUSH spark) = execHiThread $ mkThread tp (unClosure spark)
 handlePUSH _ _ = error "panic in handlePUSH: not a PUSH message"
 
@@ -262,7 +262,7 @@ handleTERM _ _ _ = error "panic in handleTERM: not a TERM message"
 -- Message handler, running continously (in its own thread) receiving
 -- and handling messages (some of which may unblock threads or create sparks)
 -- as they arrive. Message handler terminates on receiving TERM message(s).
-handler :: MVar () -> Int -> [(Int, Deque.DequeIO Thread)] -> IO ()
+handler :: MVar () -> Int -> ThreadPools -> IO ()
 handler term_barrier term_count ps =
   when (term_count >= 0) $ do
     msg <- decodeLazy <$> Comm.receive

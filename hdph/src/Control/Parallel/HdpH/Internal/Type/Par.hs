@@ -12,6 +12,7 @@ module Control.Parallel.HdpH.Internal.Type.Par
     ask,
     Thread(..),
     ThreadCont(..),
+    ThreadPools,
     Spark       -- synonym: Spark m = Closure (ParM m ())
   ) where
 
@@ -26,10 +27,7 @@ import Control.Parallel.HdpH.Internal.Data.Deque (DequeIO)
 --   [1] Claessen "A Poor Man's Concurrency Monad", JFP 9(3), 1999.
 --   [2] Marlow et al. "A monad for deterministic parallelism". Haskell 2011.
 
--- 'ParM m' is a continuation monad, specialised to the return type 'Thread m';
--- 'm' abstracts a monad encapsulating the underlying state.
--- newtype ParM m a = Par { unPar :: (a -> Thread m) -> Thread m }
-
+-- We make use of a continuation monad with reader (contR) to pass around the threadpool state
 newtype ContR s r a = ContR { unPar :: s -> (a -> r) -> r }
 
 instance Functor (ContR s r) where
@@ -40,15 +38,17 @@ instance Applicative (ContR s r) where
   (<*>) = ap
 
 instance Monad (ContR s r) where
-  return a = ContR $ \s c -> c a
+  return a = ContR $ \_ c -> c a
   f >>= k  = ContR $ \s c -> unPar f s $ \a -> unPar (k a) s c
 
 ask :: ContR s r s
 ask = ContR $ \s c -> c s
 
-type Par a = ContR [(Int, DequeIO Thread)] Thread a
+type ThreadPools = [(Int, DequeIO Thread)]
 
-runPar :: Par a -> [(Int, DequeIO Thread)] -> (a -> Thread) -> Thread
+type Par a = ContR ThreadPools Thread a
+
+runPar :: Par a -> ThreadPools -> (a -> Thread) -> Thread
 runPar k tp f = unPar k tp f
 
 mkPar :: (s -> (a -> r) -> r) -> ContR s r a

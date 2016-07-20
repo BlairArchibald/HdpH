@@ -56,7 +56,7 @@ import Control.Parallel.HdpH.Internal.Data.Deque (DequeIO)
 import Control.Parallel.HdpH.Internal.Data.DistMap (DistMap)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap (new, keys, minDist, lookup)
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm (equiDistBases, nodes)
-import Control.Parallel.HdpH.Internal.Type.Par (Thread, Spark)
+import Control.Parallel.HdpH.Internal.Type.Par (Thread, Spark, ThreadPools)
 import Control.Parallel.HdpH.Internal.Misc (ActionServer)
 import Control.Parallel.HdpH.Internal.Location (Node)
 import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (WorkQueueIO, sizeIO)
@@ -78,7 +78,7 @@ data RTSState =
     , sSparkRcvd  :: IORef Int               -- #sparks received
     , sSparkGen   :: IORef Int               -- #sparks generated
     , sSparkConv  :: IORef Int               -- #sparks converted
-    , sTpools     :: [(Int, DequeIO Thread)] -- list of actual thread pools,
+    , sTpools     :: ThreadPools             -- list of actual thread pools,
   }
 
 -- Warning: Initially uninitialised
@@ -89,7 +89,7 @@ rtsState = unsafePerformIO $ newIORef RTSState{..}
 initialiseRTSState :: RTSConf
                    -> ActionServer
                    -> Sem
-                   -> [(Int, DequeIO Thread)]
+                   -> ThreadPools
                    -> IO ()
 initialiseRTSState conf noW idleS tps = do
   rs         <- getDistsIO
