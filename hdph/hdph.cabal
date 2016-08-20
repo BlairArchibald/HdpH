@@ -68,10 +68,3 @@ Library
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall
-
-executable hello
-  hs-source-dirs:  test/
-  main-is:         hello.hs
-  build-depends:   template-haskell,
-                   hdph,
-                   base
