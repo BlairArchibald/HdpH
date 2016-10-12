@@ -305,8 +305,8 @@ typeClosureAbs :: (String -> String) -> Name -> Q Type
 typeClosureAbs mkErrMsg name = do
   info <- reify name
   case info of
-    DataConI _ ty _ _ -> return ty
-    VarI     _ ty _ _ -> return ty
+    DataConI _ ty _ -> return ty
+    VarI     _ ty _ -> return ty
     _                 -> fail $ mkErrMsg $ show name
 
 
