@@ -4,12 +4,10 @@ flags:
 packages:
   - hdph-closure/
   - hdph/
+  - hdph-applications/
 
 extra-deps:
   - network-multicast-0.1.1
   - pqueue-1.3.2
-
-# - transformers-0.5.2.0
-# - transformers-compat-0.5.1.4
 
 resolver: lts-7.3

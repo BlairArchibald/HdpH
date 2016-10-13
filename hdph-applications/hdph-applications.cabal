@@ -1,0 +1,265 @@
+name:          hdph-applications
+version:       0.2.3
+synopsis:      Selection of Test applications for HdpH
+description:   Haskell distributed parallel Haskell (HdpH) is a Haskell DSL
+               for distributed-memory parallelism, implemented entirely in
+               Haskell (as supported by GHC). This package consists of a set of test applications.
+homepage:      https://github.com/PatrickMaier/HdpH
+license:       BSD3
+license-file:  LICENSE
+author:        Patrick Maier <C.Patrick.Maier@gmail.com>,
+               Rob Stewart <robstewart57@gmail.com>
+               Blair Archibald <mrblairarchibald@gmail.com
+maintainer:    Blair Archibald <mrblairarchibald@gmail.com
+stability:     experimental
+category:      Control, Parallelism, Distributed Computing, Monads
+tested-with:   GHC == 7.6.3 || == 7.8.2 || == 7.10.3
+build-type:    Simple
+cabal-version: >= 1.8
+
+Executable hello
+  main-is:         hello.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hdph == 0.2.3,
+                   hashable >= 1.2.1 && < 2,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+Executable dist
+  main-is:         dist.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
+                   hdph == 0.2.3,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+
+Executable fib
+  main-is:         fib.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
+                   hdph == 0.2.3,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+Executable sumeuler
+  main-is:         sumeuler.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
+                   hdph == 0.2.3,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+
+Executable sumeuler-2level
+  main-is:         sumeuler-2level.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
+                   hdph == 0.2.3,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+Executable queens
+  main-is:         queens.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
+                   hdph == 0.2.3,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+Executable nbody
+  main-is:         nbody.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
+                   hdph == 0.2.3,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+Executable sum-liouville
+  main-is:         sum-liouville.hs
+  build-depends:   template-haskell,
+                   array >= 0.4 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal >= 0.5 && < 0.6,
+                   clock >= 0.6 && < 0.8,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
+                   hdph == 0.2.3,
+                   mtl >= 2 && < 3,
+                   network >= 2.4 && < 2.7,
+                   network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.5.*,
+                   pqueue >= 1.3 && < 1.4,
+                   random >= 1 && < 2,
+                   random-fu >= 0.2 && < 0.3,
+                   random-source >= 0.3 && < 0.4,
+                   time >= 1.2 && < 2,
+                   unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+Executable pingpong
+  main-is:         pingpong.hs
+  build-depends:   template-haskell,
+                   base >= 4 && < 5,
+                   clock >= 0.6 && < 0.8,
+                   hdph == 0.2.3,
+                   hdph-closure >= 0.2.0 && < 0.3
+  ghc-options:     -Wall -threaded -rtsopts -O2
+
+-- Executable mandel
+--   main-is:         mandel.hs
+--   build-depends:   template-haskell,
+--                    array >= 0.4 && < 0.6,
+--                    base >= 4 && < 5,
+--                    binary >= 0.7 && <0.8,
+--                    cereal >= 0.5 && < 0.6,
+--                    clock >= 0.6 && < 0.8,
+--                    bytestring == 0.10.*,
+--                    containers >= 0.1 && < 0.6,
+--                    deepseq >= 1.1 && < 2,
+--                    hashable >= 1.2.1 && < 2,
+--                    hdph == 0.2.3,
+--                    mtl >= 2 && < 3,
+--                    monad-par >= 0.3 && < 0.4,
+--                    monad-par-extras >= 0.3 && < 0.4,
+--                    network >= 2.4 && < 2.7,
+--                    network-info == 0.2.*,
+--                    network-multicast >= 0.0.7 && < 0.2,
+--                    network-transport == 0.4.*,
+--                    network-transport-tcp == 0.5.*,
+--                    pqueue >= 1.3 && < 1.4,
+--                    random >= 1 && < 2,
+--                    split >= 0.2 && < 3,
+--                    time >= 1.2 && < 2,
+--                    unix >= 2.6 && < 2.8,
+--                    unordered-containers >= 0.1 && < 1,
+--                    vector >= 0.11 && < 0.12,
+--                    vector-binary-instances >= 0.2 && < 0.3,
+--                    hdph-closure >= 0.2.0 && < 0.3
+--   ghc-options:     -Wall -threaded -rtsopts -O2
