@@ -52,7 +52,6 @@ Library
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.2.1 && < 2,
-                   mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,

@@ -13,7 +13,7 @@ module Control.Parallel.HdpH.Internal.Type.Par
   ) where
 
 import Prelude
-import Control.Monad.Cont
+import Control.Monad.Trans.Cont
 import Control.Parallel.HdpH.Closure (Closure)
 
 -----------------------------------------------------------------------------
