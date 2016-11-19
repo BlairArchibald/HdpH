@@ -28,8 +28,8 @@ module Control.Parallel.HdpH.Internal.Threadpool
 
 import Prelude hiding (error)
 import Control.Concurrent (ThreadId)
-import Control.Monad.Reader (ReaderT, runReaderT, ask)
-import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
+import Control.Monad.Trans.Class (lift)
 
 import Control.Parallel.HdpH.Internal.Data.Deque
        (DequeIO, pushFrontIO, popFrontIO, popBackIO, maxLengthIO)
@@ -73,6 +73,7 @@ forkThreadM n action = do
 -- Lifting lower layers.
 liftSparkM :: SparkM m a -> ThreadM m a
 liftSparkM = lift
+
 
 liftIO :: IO a -> ThreadM m a
 liftIO = liftSparkM . Sparkpool.liftIO

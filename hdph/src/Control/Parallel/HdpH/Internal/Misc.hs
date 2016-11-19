@@ -72,8 +72,8 @@ import Control.Concurrent (ThreadId)
 import qualified Control.Concurrent (forkIO, forkOn, killThread)
 import Control.Concurrent.Chan (Chan, newChan, writeChan, readChan)
 import Control.Monad (join, ap)
-import Control.Monad.Reader (ReaderT, runReaderT, ask)
-import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
+import Control.Monad.Trans.Class (lift)
 import qualified Data.ByteString 
        as Strict (ByteString, unpack)
 import qualified Data.ByteString.Lazy

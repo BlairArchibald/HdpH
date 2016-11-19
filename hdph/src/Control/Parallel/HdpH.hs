@@ -108,7 +108,7 @@ import Control.Parallel.HdpH.Internal.Threadpool (putThread, putThreads)
 import Control.Parallel.HdpH.Internal.Type.Par
        (ParM, Thread(Atom), ThreadCont(ThreadCont, ThreadDone))
 import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (Priority)
-import Control.Monad.Cont (cont)
+import Control.Monad.Trans.Cont (cont)
 
 -----------------------------------------------------------------------------
 -- $Intro
