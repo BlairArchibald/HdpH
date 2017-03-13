@@ -38,6 +38,7 @@ Library
                    Control.Parallel.HdpH.Internal.State.Comm,
                    Control.Parallel.HdpH.Internal.State.GRef,
                    Control.Parallel.HdpH.Internal.State.Location,
+                   Control.Parallel.HdpH.Internal.State.RTSState,
                    Control.Parallel.HdpH.Internal.Threadpool,
                    Control.Parallel.HdpH.Internal.Topology,
                    Control.Parallel.HdpH.Internal.Type.Comm,
@@ -60,7 +61,7 @@ Library
                    pqueue >= 1.3 && < 1.4,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   transformers >= 0.5.2.0 && < 0.6,
+                   transformers >= 0.4.2.0 && < 0.6,
                    unix >= 2.6 && < 2.8,
                    unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3

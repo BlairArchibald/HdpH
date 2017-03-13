@@ -7,39 +7,25 @@
 {-# LANGUAGE BangPatterns #-}
 
 module Control.Parallel.HdpH.Internal.Sparkpool
-  ( -- * spark pool monad
-    SparkM,      -- synonym: SparkM m = ReaderT <State m> IO
-    run,         -- :: RTSConf -> ActionServer -> Sem -> SparkM m a -> IO a
-    liftIO,      -- :: IO a -> SparkM m a
-
+  (
     -- * blocking and unblocking idle schedulers
-    blockSched,      -- :: SparkM m ()
-    wakeupSched,     -- :: Int -> SparkM m ()
+    blockSched,      -- :: IO ()
+    wakeupSched,     -- :: Int -> IO ()
 
     -- * local (ie. scheduler) access to spark pool
-    getLocalSpark,   -- :: Int -> SparkM m (Maybe (Spark m))
-    putLocalSpark,   -- :: Int -> Dist -> Spark m -> SparkM m ()
-    -- :: Int -> Dist -> Priority -> Spark m -> SparkM m ()
+    getLocalSpark,   -- :: Int -> IO (Maybe Spark)
+    putLocalSpark,   -- :: Int -> Dist -> Spark -> IO ()
+    -- :: Int -> Dist -> Priority -> Spark -> IO ()
     putLocalSparkWithPrio,
 
     -- * messages
     Msg(..),         -- instances: Show, NFData, Serialize
 
     -- * handle messages related to fishing
-    dispatch,        -- :: Msg m -> SparkM m ()
-    handleFISH,      -- :: Msg m -> SparkM m ()
-    handleSCHEDULE,  -- :: Msg m -> SparkM m ()
-    handleNOWORK,    -- :: Msg m -> SparkM m ()
-
-    -- * access to stats data
-    readPoolSize,      -- :: Dist -> SparkM m Int
-    readFishSentCtr,   -- :: SparkM m Int
-    readSparkRcvdCtr,  -- :: SparkM m Int
-    -- Currently unsupported by priority queue implementation
-    -- readMaxSparkCtr,   -- :: Dist -> SparkM m Int
-    -- readMaxSparkCtrs,  -- :: SparkM m [Int]
-    readSparkGenCtr,   -- :: SparkM m Int
-    readSparkConvCtr   -- :: SparkM m Int
+    dispatch,        -- :: Msg -> IO ()
+    handleFISH,      -- :: Msg -> IO ()
+    handleSCHEDULE,  -- :: Msg -> IO ()
+    handleNOWORK,    -- :: Msg -> IO ()
   ) where
 
 import Prelude hiding (error)
@@ -56,6 +42,9 @@ import Data.Ord (comparing)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
 import Data.Word (Word8)
+
+import Data.IORef (readIORef)
+
 import System.Random (randomRIO)
 
 import Control.Parallel.HdpH.Conf
@@ -85,179 +74,19 @@ import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
 import Control.Parallel.HdpH.Internal.Topology (dist)
 import Control.Parallel.HdpH.Internal.Misc (encodeLazy, ActionServer, reqAction)
 import Control.Parallel.HdpH.Internal.Type.Par (Spark)
-
-
-
------------------------------------------------------------------------------
--- SparkM monad
-
--- 'SparkM m' is a reader monad sitting on top of the 'IO' monad;
--- the parameter 'm' abstracts a monad (cf. module HdpH.Internal.Type.Par).
-type SparkM m = ReaderT (State m) IO
-
-
--- spark pool state (mutable bits held in IORefs and the like)
-data State m =
-  State {
-    s_conf       :: RTSConf,               -- config data
-    s_pools      :: DistMap (WorkQueueIO (Spark m)),  -- actual spark pools
-    s_sparkOrig  :: IORef (Maybe Node),    -- primary FISH target (recent src)
-    s_fishing    :: IORef Bool,            -- True iff FISH outstanding
-    s_noWork     :: ActionServer,          -- for clearing "FISH outstndg" flag
-    s_idleScheds :: Sem,                   -- semaphore for idle schedulers
-    s_fishSent   :: IORef Int,             -- #FISH sent
-    s_sparkRcvd  :: IORef Int,             -- #sparks received
-    s_sparkGen   :: IORef Int,             -- #sparks generated
-    s_sparkConv  :: IORef Int }            -- #sparks converted
-
-
--- Eliminates the 'SparkM' layer by executing the given 'SparkM' action on
--- an empty spark pool; expects a config data, an action server (for
--- clearing "FISH outstanding" flag) and a semaphore (for idle schedulers).
-run :: RTSConf -> ActionServer -> Sem -> SparkM m a -> IO a
-run conf noWorkServer idleSem action = do
-  -- set up spark pool state (with as many pools as there are equidist bases)
-  rs        <- getDistsIO
-  pools     <- DistMap.new <$> sequence [emptyIO | _ <- rs]
-  sparkOrig <- newIORef Nothing
-  fishing   <- newIORef False
-  fishSent  <- newIORef 0
-  sparkRcvd <- newIORef 0
-  sparkGen  <- newIORef 0
-  sparkConv <- newIORef 0
-  let s0 = State { s_conf       = conf,
-                   s_pools      = pools,
-                   s_sparkOrig  = sparkOrig,
-                   s_fishing    = fishing,
-                   s_noWork     = noWorkServer,
-                   s_idleScheds = idleSem,
-                   s_fishSent   = fishSent,
-                   s_sparkRcvd  = sparkRcvd,
-                   s_sparkGen   = sparkGen,
-                   s_sparkConv  = sparkConv }
-  -- run monad
-  runReaderT action s0
-
-
--- Lifting lower layers.
-liftIO :: IO a -> SparkM m a
-liftIO = lift
-
-
------------------------------------------------------------------------------
--- access to state
-
-getPool :: Dist -> SparkM m (WorkQueueIO (Spark m))
-getPool r = DistMap.lookup r . s_pools <$> ask
-
-readPoolSize :: Dist -> SparkM m Int
-readPoolSize r = getPool r >>= liftIO . sizeIO
-
-getSparkOrigHist :: SparkM m (IORef (Maybe Node))
-getSparkOrigHist = s_sparkOrig <$> ask
-
-readSparkOrigHist :: SparkM m (Maybe Node)
-readSparkOrigHist = do
-  useLastSteal <- useLastStealOptimisation <$> s_conf <$> ask
-  if useLastSteal
-   then getSparkOrigHist >>= liftIO . readIORef
-   else return Nothing
-
-
-setSparkOrigHist :: Node -> SparkM m ()
-setSparkOrigHist mostRecentOrigin = do
-  sparkOrigHistRef <- getSparkOrigHist
-  liftIO $ writeIORef sparkOrigHistRef (Just mostRecentOrigin)
-
-clearSparkOrigHist :: SparkM m ()
-clearSparkOrigHist = do
-  sparkOrigHistRef <- getSparkOrigHist
-  liftIO $ writeIORef sparkOrigHistRef Nothing
-
-getFishingFlag :: SparkM m (IORef Bool)
-getFishingFlag = s_fishing <$> ask
-
-getNoWorkServer :: SparkM m ActionServer
-getNoWorkServer = s_noWork <$> ask
-
-getIdleSchedsSem :: SparkM m Sem
-getIdleSchedsSem = s_idleScheds <$> ask
-
-getFishSentCtr :: SparkM m (IORef Int)
-getFishSentCtr = s_fishSent <$> ask
-
-readFishSentCtr :: SparkM m Int
-readFishSentCtr = getFishSentCtr >>= readCtr
-
-getSparkRcvdCtr :: SparkM m (IORef Int)
-getSparkRcvdCtr = s_sparkRcvd <$> ask
-
-readSparkRcvdCtr :: SparkM m Int
-readSparkRcvdCtr = getSparkRcvdCtr >>= readCtr
-
-getSparkGenCtr :: SparkM m (IORef Int)
-getSparkGenCtr = s_sparkGen <$> ask
-
-readSparkGenCtr :: SparkM m Int
-readSparkGenCtr = getSparkGenCtr >>= readCtr
-
-getSparkConvCtr :: SparkM m (IORef Int)
-getSparkConvCtr = s_sparkConv <$> ask
-
-readSparkConvCtr :: SparkM m Int
-readSparkConvCtr = getSparkConvCtr >>= readCtr
-
--- Currently Unsupported by the priority queue
-
--- readMaxSparkCtr :: Dist -> SparkM m Int
--- readMaxSparkCtr r = getPool r >>= liftIO . maxLengthIO
-
--- readMaxSparkCtrs :: SparkM m [Int]
--- readMaxSparkCtrs = liftIO getDistsIO >>= mapM readMaxSparkCtr
-
-getMaxHops :: SparkM m Int
-getMaxHops = maxHops <$> s_conf <$> ask
-
-getMaxFish :: SparkM m Int
-getMaxFish = maxFish <$> s_conf <$> ask
-
-getMinSched :: SparkM m Int
-getMinSched = minSched <$> s_conf <$> ask
-
-getMinFishDly :: SparkM m Int
-getMinFishDly = minFishDly <$> s_conf <$> ask
-
-getMaxFishDly :: SparkM m Int
-getMaxFishDly = maxFishDly <$> s_conf <$> ask
-
-
------------------------------------------------------------------------------
--- access to Comm module state
-
-singleNode :: SparkM m Bool
-singleNode = (< 2) <$> liftIO Comm.nodes
-
-getEquiDistBasesIO :: IO (DistMap [(Node, Int)])
-getEquiDistBasesIO = Comm.equiDistBases
-
-getDistsIO :: IO [Dist]
-getDistsIO = DistMap.keys <$> Comm.equiDistBases
-
-getMinDistIO :: IO Dist
-getMinDistIO = DistMap.minDist <$> Comm.equiDistBases
-
+import Control.Parallel.HdpH.Internal.State.RTSState
 
 -----------------------------------------------------------------------------
 -- blocking and unblocking idle schedulers
 
 -- Put executing scheduler to sleep.
-blockSched :: SparkM m ()
-blockSched = getIdleSchedsSem >>= liftIO . Sem.wait
+blockSched :: IO ()
+blockSched = getIdleSchedsSem >>= Sem.wait
 
 
 -- Wake up 'n' sleeping schedulers.
-wakeupSched :: Int -> SparkM m ()
-wakeupSched n = getIdleSchedsSem >>= liftIO . replicateM_ n . Sem.signal
+wakeupSched :: Int -> IO ()
+wakeupSched n = getIdleSchedsSem >>= replicateM_ n . Sem.signal
 
 
 -----------------------------------------------------------------------------
@@ -266,10 +95,10 @@ wakeupSched n = getIdleSchedsSem >>= liftIO . replicateM_ n . Sem.signal
 -- Local spark selection policy (pick sparks from back of queue),
 -- starting from radius 'r' and and rippling outwords;
 -- the scheduler ID may be used for logging.
-selectLocalSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist, Priority))
+selectLocalSpark :: Int -> Dist -> IO (Maybe (Spark, Dist, Priority))
 selectLocalSpark schedID !r = do
   pool <- getPool r
-  maybe_spark <- liftIO $ dequeueTaskIO pool
+  maybe_spark <- dequeueTaskIO pool
   case maybe_spark of
     Just (p, spark)     -> return $ Just (spark, r, p)       -- return spark
     Nothing | r == one  -> return Nothing                    -- pools empty
@@ -281,17 +110,17 @@ selectLocalSpark schedID !r = do
 -- hold at least 'minSched' sparks in total;
 -- schedID (expected to be msg handler ID 0) may be used for logging.
 -- TODO: Track total number of sparks in pools more effectively.
-selectRemoteSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist, Priority))
+selectRemoteSpark :: Int -> Dist -> IO (Maybe (Spark, Dist, Priority))
 selectRemoteSpark _schedID r0 = do
   may <- maySCHEDULE
   if may
     then pickRemoteSpark r0
     else return Nothing
       where
-        pickRemoteSpark :: Dist -> SparkM m (Maybe (Spark m, Dist, Priority))
+        pickRemoteSpark :: Dist -> IO (Maybe (Spark, Dist, Priority))
         pickRemoteSpark !r = do
           pool <- getPool r
-          maybe_spark <- liftIO $ dequeueTaskIO pool
+          maybe_spark <- dequeueTaskIO pool
           case maybe_spark of
             Just (p,spark)      -> return $ Just (spark, r, p)  -- return spark
             Nothing | r == one  -> return Nothing            -- pools empty
@@ -299,16 +128,16 @@ selectRemoteSpark _schedID r0 = do
 
 
 -- Returns True iff total number of sparks in pools is at least 'minSched'.
-maySCHEDULE :: SparkM m Bool
+maySCHEDULE :: IO Bool
 maySCHEDULE = do
   min_sched <- getMinSched
-  r_min <- liftIO getMinDistIO
+  r_min <- getMinDistIO
   checkPools r_min min_sched one
     where
-      checkPools :: Dist -> Int -> Dist -> SparkM m Bool
+      checkPools :: Dist -> Int -> Dist -> IO Bool
       checkPools r_min !min_sparks !r = do
         pool <- getPool r
-        sparks <- liftIO $ sizeIO pool
+        sparks <- sizeIO pool
         let min_sparks' = min_sparks - sparks
         if min_sparks' <= 0
           then return True
@@ -323,17 +152,17 @@ maySCHEDULE = do
 -- Get a spark from the back of a spark pool with minimal radius, if any exists;
 -- possibly send a FISH message and update stats (ie. count sparks converted);
 -- the scheduler ID argument may be used for logging.
-getLocalSpark :: Int -> SparkM m (Maybe (Spark m))
+getLocalSpark :: Int -> IO (Maybe (Spark))
 getLocalSpark schedID = do
   -- select local spark, starting with smallest radius
-  r_min <- liftIO getMinDistIO
+  r_min <- getMinDistIO
   maybe_spark <- selectLocalSpark schedID r_min
   case maybe_spark of
     Nothing         -> do
       sendFISH zero
       return Nothing
     Just (spark, r, p) -> do
-      useLowWatermark <- useLowWatermarkOptimisation <$> s_conf <$> ask
+      useLowWatermark <- useLowWatermarkOptimisation . sConf <$> getRTSState
       when useLowWatermark $ sendFISH r
 
       getSparkConvCtr >>= incCtr
@@ -346,13 +175,13 @@ getLocalSpark schedID = do
 -- Put a new spark at the back of the spark pool at radius 'r', wake up
 -- 1 sleeping scheduler, and update stats (ie. count sparks generated locally);
 -- the scheduler ID argument may be used for logging.
-putLocalSpark :: Int -> Dist -> Spark m -> SparkM m ()
+putLocalSpark :: Int -> Dist -> Spark -> IO ()
 putLocalSpark _schedID r spark = putLocalSparkWithPrio _schedID r 0 spark
 
-putLocalSparkWithPrio :: Int -> Dist -> Priority -> Spark m -> SparkM m ()
+putLocalSparkWithPrio :: Int -> Dist -> Priority -> Spark -> IO ()
 putLocalSparkWithPrio _schedID r p spark = do
   pool <- getPool r
-  liftIO $ enqueueTaskIO pool p spark
+  enqueueTaskIO pool p spark
   wakeupSched 1
   getSparkGenCtr >>= incCtr
   debug dbgSpark $
@@ -362,13 +191,13 @@ putLocalSparkWithPrio _schedID r p spark = do
 -- Put received spark at the back of the spark pool at radius 'r', wake up
 -- 1 sleeping scheduler, and update stats (ie. count sparks received);
 -- schedID (expected to be msg handler ID 0) may be used for logging.
-putRemoteSpark :: Int -> Dist -> Spark m -> SparkM m ()
+putRemoteSpark :: Int -> Dist -> Spark -> IO ()
 putRemoteSpark _schedID r spark = putRemoteSparkWithPrio _schedID r 0 spark
 
-putRemoteSparkWithPrio :: Int -> Dist -> Priority -> Spark m -> SparkM m ()
+putRemoteSparkWithPrio :: Int -> Dist -> Priority -> Spark -> IO ()
 putRemoteSparkWithPrio _schedID r p spark = do
   pool <- getPool r
-  liftIO $ enqueueTaskIO pool p spark
+  enqueueTaskIO pool p spark
   wakeupSched 1
   getSparkRcvdCtr >>= incCtr
 
@@ -376,7 +205,7 @@ putRemoteSparkWithPrio _schedID r p spark = do
 -- HdpH messages (peer to peer)
 
 -- 5 different types of messages dealing with fishing and pushing sparks
-data Msg m = TERM        -- termination message (broadcast from root and back)
+data Msg =   TERM        -- termination message (broadcast from root and back)
                !Node       -- root node
            | FISH        -- thief looking for work
                !Node       -- thief
@@ -386,14 +215,14 @@ data Msg m = TERM        -- termination message (broadcast from root and back)
                !Bool       -- True iff FISH may be forwarded to primary source
            | NOWORK      -- reply to thief's FISH (when there is no work)
            | SCHEDULE    -- reply to thief's FISH (when there is work)
-               (Spark m)   -- spark
+                Spark   -- spark
                !Dist       -- spark's radius
                !Priority   -- spark's priority
                !Node       -- victim
            | PUSH        -- eagerly pushing work
-               (Spark m)   -- spark
+                Spark    -- spark
 
--- Invariants for 'FISH thief avoid candidates sources fwd :: Msg m':
+-- Invariants for 'FISH thief avoid candidates sources fwd :: Msg':
 -- * Lists 'candidates' and 'sources' are sorted in order of ascending
 --   distance from 'thief'.
 -- * Lists 'avoid', 'candidates' and 'sources' are sets (ie. no duplicates).
@@ -406,7 +235,7 @@ data Msg m = TERM        -- termination message (broadcast from root and back)
 --   into one packet).
 
 -- Show instance (mainly for debugging)
-instance Show (Msg m) where
+instance Show Msg where
   showsPrec _ (TERM root)                = showString "TERM(" . shows root .
                                            showString ")"
   showsPrec _ (FISH thief avoid candidates sources fwd)
@@ -425,7 +254,7 @@ instance Show (Msg m) where
   showsPrec _ (PUSH _spark)             = showString "PUSH(_)"
 
 
-instance NFData (Msg m) where
+instance NFData Msg where
   rnf (TERM _root)                                = ()
   rnf (FISH _thief avoid candidates sources _fwd) = rnf avoid `seq`
                                                     rnf candidates `seq`
@@ -436,7 +265,7 @@ instance NFData (Msg m) where
 
 
 -- TODO: Derive this instance.
-instance Serialize (Msg m) where
+instance Serialize Msg where
   put (TERM root)               = Data.Serialize.put (0 :: Word8) >>
                                   Data.Serialize.put root
   put (FISH thief avoid candidates sources fwd)
@@ -474,7 +303,7 @@ instance Serialize (Msg m) where
                      return $ SCHEDULE spark r p victim
              4 -> do spark  <- Data.Serialize.get
                      return $ PUSH spark
-             _ -> error "panic in instance Serialize (Msg m): tag out of range"
+             _ -> error "panic in instance Serialize Msg: tag out of range"
 
 
 -----------------------------------------------------------------------------
@@ -483,7 +312,7 @@ instance Serialize (Msg m) where
 -- Returns True iff FISH message should be sent;
 -- assumes spark pools at radius < r_min are empty, and
 -- all pools are empty if r_min == zero.
-goFISHing :: Dist -> SparkM m Bool
+goFISHing :: Dist -> IO Bool
 goFISHing r_min = do
   fishingFlag <- getFishingFlag
   isFishing   <- readFlag fishingFlag
@@ -501,10 +330,10 @@ goFISHing r_min = do
         then return True
         else checkPools max_fish r_min
           where
-            checkPools :: Int -> Dist -> SparkM m Bool
+            checkPools :: Int -> Dist -> IO Bool
             checkPools min_sparks r = do
               pool <- getPool r
-              sparks <- liftIO $ sizeIO pool
+              sparks <- sizeIO pool
               let min_sparks' = min_sparks - sparks
               if min_sparks' < 0
                 then return True
@@ -518,7 +347,7 @@ goFISHing r_min = do
 -- assumes pools at radius < r_min are empty, and all pools are empty if
 -- r_min == zero; the FISH victim is one of minimal distance, selected
 -- according to the 'selectFirstVictim' policy.
-sendFISH :: Dist -> SparkM m ()
+sendFISH :: Dist -> IO ()
 sendFISH r_min = do
   -- check whether a FISH message should be sent
   go <- goFISHing r_min
@@ -529,9 +358,9 @@ sendFISH r_min = do
     when ok $ do
       -- flag was clear before: go ahead sending FISH
       -- select victim
-      thief <- liftIO $ Comm.myNode
+      thief <- Comm.myNode
       max_hops <- getMaxHops
-      candidates <- liftIO $ randomCandidates max_hops
+      candidates <- randomCandidates max_hops
 
       maybe_src <- readSparkOrigHist
 
@@ -546,7 +375,7 @@ sendFISH r_min = do
       -- send FISH (or NOWORK) message
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send target $ encodeLazy msg
+      Comm.send target $ encodeLazy msg
       case msg of
         FISH _ _ _ _ _ -> getFishSentCtr >>= incCtr  -- update stats
         _              -> return ()
@@ -561,7 +390,7 @@ randomCandidates n = do
 
 
 -- Dispatch FISH, SCHEDULE and NOWORK messages to their respective handlers.
-dispatch :: Msg m -> SparkM m ()
+dispatch :: Msg -> IO ()
 dispatch msg@(FISH _ _ _ _ _)   = handleFISH msg
 dispatch msg@(SCHEDULE _ _ _ _)   = handleSCHEDULE msg
 dispatch msg@(NOWORK)           = handleNOWORK msg
@@ -573,16 +402,16 @@ dispatch msg = error $ "HdpH.Internal.Sparkpool.dispatch: " ++
 -- * with SCHEDULE if pool has enough sparks, or else
 -- * with NOWORK if FISH has travelled far enough, or else
 -- * forwards FISH to a candidate target or a primary source of work.
-handleFISH :: Msg m -> SparkM m ()
+handleFISH :: Msg -> IO ()
 handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
-  me <- liftIO Comm.myNode
+  me <- Comm.myNode
   maybe_spark <- selectRemoteSpark 0 (dist thief me)
   case maybe_spark of
     Just (spark, r, prio) -> do -- compose and send SCHEDULE
       let scheduleMsg = SCHEDULE spark r prio me
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy scheduleMsg) in
         show scheduleMsg ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send thief $ encodeLazy scheduleMsg
+      Comm.send thief $ encodeLazy scheduleMsg
     Nothing -> do
       maybe_src <- readSparkOrigHist
       -- compose FISH message to forward
@@ -590,12 +419,12 @@ handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
       -- send message
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy forwardMsg) in
         show forwardMsg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send target $ encodeLazy forwardMsg
+      Comm.send target $ encodeLazy forwardMsg
 handleFISH _ = error "panic in handleFISH: not a FISH message"
 
 -- Auxiliary function, called by 'handleFISH' when there is nought to schedule.
 -- Constructs a forward and selects a target, or constructs a NOWORK reply.
-forwardFISH :: Node -> Maybe Node -> Msg m -> (Node, Msg m)
+forwardFISH :: Node -> Maybe Node -> Msg -> (Node, Msg)
 forwardFISH me _          (FISH thief avoid candidates sources False) =
   dispatchFISH (FISH thief (me:avoid) candidates sources False)
 forwardFISH me Nothing    (FISH thief avoid candidates sources _)     =
@@ -611,7 +440,7 @@ forwardFISH _ _ _ = error "panic in forwardFISH: not a FISH message"
 
 -- Auxiliary function, called by 'forwardFISH'.
 -- Extracts target and message from preliminary FISH message.
-dispatchFISH :: Msg m -> (Node, Msg m)
+dispatchFISH :: Msg -> (Node, Msg)
 dispatchFISH (FISH thief avoid' candidates sources' _) =
   case (candidates, sources') of
     ([],         [])       -> (thief, NOWORK)
@@ -631,7 +460,7 @@ dispatchFISH _ = error "panic in dispatchFISH: not a FISH message"
 -- * wakes up 1 sleeping scheduler,
 -- * records spark sender and updates stats, and
 -- * clears the "FISH outstanding" flag.
-handleSCHEDULE :: Msg m -> SparkM m ()
+handleSCHEDULE :: Msg -> IO ()
 handleSCHEDULE (SCHEDULE spark r p victim) = do
   -- put spark into pool, wakeup scheduler and update stats
   putRemoteSparkWithPrio 0 r p spark
@@ -648,7 +477,7 @@ handleSCHEDULE _ = error "panic in handleSCHEDULE: not a SCHEDULE message"
 -- sleeping) to resume fishing.
 -- Rationale for random delay: to prevent FISH flooding when there is
 --   (almost) no work.
-handleNOWORK :: Msg m -> SparkM m ()
+handleNOWORK :: Msg -> IO ()
 handleNOWORK NOWORK = do
   clearSparkOrigHist
   fishingFlag   <- getFishingFlag
@@ -665,7 +494,7 @@ handleNOWORK NOWORK = do
                   -- wakeup 1 sleeping scheduler (to fish again)
                   Sem.signal idleSchedsSem
   -- post action request to server
-  liftIO $ reqAction noWorkServer action
+  reqAction noWorkServer action
 handleNOWORK _ = error "panic in handleNOWORK: not a NOWORK message"
 
 
@@ -678,24 +507,6 @@ spineList []     = ()
 spineList (_:xs) = spineList xs
 
 
-readFlag :: IORef Bool -> SparkM m Bool
-readFlag = liftIO . readIORef
-
--- Sets given 'flag'; returns True iff 'flag' did actually change.
-setFlag :: IORef Bool -> SparkM m Bool
-setFlag flag = liftIO $ atomicModifyIORef flag $ \ v -> (True, not v)
-
--- Clears given 'flag'; returns True iff 'flag' did actually change.
-clearFlag :: IORef Bool -> SparkM m Bool
-clearFlag flag = liftIO $ atomicModifyIORef flag $ \ v -> (False, v)
-
-
-readCtr :: IORef Int -> SparkM m Int
-readCtr = liftIO . readIORef
-
-incCtr :: IORef Int -> SparkM m ()
-incCtr ctr = liftIO $ atomicModifyIORef ctr $ \ v ->
-                        let v' = v + 1 in v' `seq` (v', ())
 
 
 -- Returns up to 'n' unique random elements from the given list of 'universes',
@@ -715,5 +526,5 @@ uniqRandomsRR n universes =
 
 
 -- debugging
-debug :: Int -> String -> SparkM m ()
-debug level message = liftIO $ Location.debug level message
+debug :: Int -> String -> IO ()
+debug level message = Location.debug level message
